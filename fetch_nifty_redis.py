@@ -39,20 +39,56 @@ except Exception as e:
 # NIFTY 50 Symbols
 # -------------------------------
 NIFTY_50_SYMBOLS = [
-    "NSE:NIFTY50-INDEX",
-    "NSE:ADANIENT-EQ","NSE:ADANIPORTS-EQ","NSE:APOLLOHOSP-EQ","NSE:ASIANPAINT-EQ",
-    "NSE:AXISBANK-EQ","NSE:BAJAJ-AUTO-EQ","NSE:BAJFINANCE-EQ","NSE:BAJAJFINSV-EQ",
-    "NSE:BPCL-EQ","NSE:BHARTIARTL-EQ","NSE:BRITANNIA-EQ","NSE:CIPLA-EQ",
-    "NSE:COALINDIA-EQ","NSE:DIVISLAB-EQ","NSE:DRREDDY-EQ","NSE:EICHERMOT-EQ",
-    "NSE:GRASIM-EQ","NSE:HCLTECH-EQ","NSE:HDFCBANK-EQ","NSE:HDFCLIFE-EQ",
-    "NSE:HEROMOTOCO-EQ","NSE:HINDALCO-EQ","NSE:HINDUNILVR-EQ","NSE:ICICIBANK-EQ",
-    "NSE:ITC-EQ","NSE:INDUSINDBK-EQ","NSE:INFY-EQ","NSE:JSWSTEEL-EQ",
-    "NSE:KOTAKBANK-EQ","NSE:LT-EQ","NSE:LTM-EQ","NSE:M&M-EQ",
-    "NSE:MARUTI-EQ","NSE:NTPC-EQ","NSE:NESTLEIND-EQ","NSE:ONGC-EQ",
-    "NSE:POWERGRID-EQ","NSE:RELIANCE-EQ","NSE:SBILIFE-EQ","NSE:SBIN-EQ",
-    "NSE:SUNPHARMA-EQ","NSE:TCS-EQ","NSE:TATACONSUM-EQ","NSE:TMPV-EQ",
-    "NSE:TATASTEEL-EQ","NSE:TECHM-EQ","NSE:TITAN-EQ","NSE:TRENT-EQ",
-    "NSE:ULTRACEMCO-EQ","NSE:WIPRO-EQ"
+    "NSE:SUNPHARMA-EQ",
+"NSE:JIOFIN-EQ",
+"NSE:COALINDIA-EQ",
+"NSE:NTPC-EQ",
+"NSE:ONGC-EQ",
+"NSE:DRREDDY-EQ",
+"NSE:HINDALCO-EQ",
+"NSE:WIPRO-EQ",
+"NSE:POWERGRID-EQ",
+"NSE:ITC-EQ",
+"NSE:TECHM-EQ",
+"NSE:TATASTEEL-EQ",
+"NSE:CIPLA-EQ",
+"NSE:ADANIENT-EQ",
+"NSE:INDIGO-EQ",
+"NSE:GRASIM-EQ",
+"NSE:MAXHEALTH-EQ",
+"NSE:NESTLEIND-EQ",
+"NSE:ADANIPORTS-EQ",
+"NSE:HDFCLIFE-EQ",
+"NSE:APOLLOHOSP-EQ",
+"NSE:HCLTECH-EQ",
+"NSE:SBILIFE-EQ",
+"NSE:TATACONSUM-EQ",
+"NSE:TMPV-EQ",
+"NSE:ASIANPAINT-EQ",
+"NSE:TRENT-EQ",
+"NSE:ETERNAL-EQ",
+"NSE:ULTRACEMCO-EQ",
+"NSE:HINDUNILVR-EQ",
+"NSE:TITAN-EQ",
+"NSE:BAJAJ-AUTO-EQ",
+"NSE:BEL-EQ",
+"NSE:JSWSTEEL-EQ",
+"NSE:SHRIRAMFIN-EQ",
+"NSE:EICHERMOT-EQ",
+"NSE:BAJAJFINSV-EQ",
+"NSE:LT-EQ",
+"NSE:MARUTI-EQ",
+"NSE:TCS-EQ",
+"NSE:INFY-EQ",
+"NSE:KOTAKBANK-EQ",
+"NSE:SBIN-EQ",
+"NSE:M&M-EQ",
+"NSE:BHARTIARTL-EQ",
+"NSE:BAJFINANCE-EQ",
+"NSE:ICICIBANK-EQ",
+"NSE:RELIANCE-EQ",
+"NSE:AXISBANK-EQ",
+"NSE:HDFCBANK-EQ"
 ]
 
 # -------------------------------
@@ -86,15 +122,19 @@ def fetch_and_store_data(force=False):
         log_path=""
     )
 
-    today = datetime.datetime.now().strftime("%Y-%m-%d")
+    # Use a 3-day range to ensure we get data even at midnight or over weekends
+    # but we will only STORE the single most recent candle found.
+    now = datetime.datetime.now()
+    end_date = now.strftime("%Y-%m-%d")
+    start_date = (now - datetime.timedelta(days=3)).strftime("%Y-%m-%d")
 
     for symbol in NIFTY_50_SYMBOLS:
         data = {
             "symbol": symbol,
             "resolution": "5",
             "date_format": "1",
-            "range_from": today,
-            "range_to": today,
+            "range_from": start_date,
+            "range_to": end_date,
             "cont_flag": "1"
         }
 
@@ -118,7 +158,9 @@ def fetch_and_store_data(force=False):
                 "volume": raw_candle[5]
             }
 
-            redis_key = symbol
+            # IMPORTANT: Extract stock name only (e.g., SUNPHARMA)
+            # This ensures keys match floating_shares.json and market_cap.py
+            redis_key = symbol.split(":")[1].replace("-EQ", "")
 
             # -------------------------------
             # Duplicate Check & Single-Candle Storage
