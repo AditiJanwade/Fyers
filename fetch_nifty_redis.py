@@ -103,6 +103,57 @@ def is_market_open():
 
     return market_open <= now <= market_close
 
+# -------------------------------
+# Calculate Market Caps Once
+# -------------------------------
+def calculate_market_caps_once():
+
+    today = datetime.date.today().isoformat()
+    redis_flag = f"market_cap_done:{today}"
+
+    # If already calculated today, skip
+    if redis_client.exists(redis_flag):
+        return
+
+    try:
+        with open("floating_shares.json", "r") as f:
+            floating_shares = json.load(f)
+
+        market_caps = []
+
+        for stock, shares in floating_shares.items():
+
+            data = redis_client.get(stock)
+
+            if not data:
+                continue
+
+            candle = json.loads(data)
+
+            close_price = candle["close"]
+
+            market_cap = close_price * shares
+
+            market_caps.append((stock, market_cap))
+
+        if not market_caps:
+            return
+
+        market_caps.sort(key=lambda x: x[1], reverse=True)
+
+        T15 = tuple(market_caps[:15])
+        R35 = tuple(market_caps[15:])
+
+        redis_client.set("T15", json.dumps(T15))
+        redis_client.set("R35", json.dumps(R35))
+
+        # mark as done for today
+        redis_client.set(redis_flag, "done")
+
+        print("Market cap calculated.")
+
+    except Exception as e:
+        print(f"Market Cap Error: {e}")
 
 # -------------------------------
 # Fetch Data from Fyers
@@ -198,6 +249,9 @@ def fetch_and_store_data(force=False):
 
         # prevent API rate limit
         time.sleep(0.1)
+
+    # Calculate market caps once
+    calculate_market_caps_once()
 
     print(f"[{datetime.datetime.now()}] Fetch Cycle Completed")
 
