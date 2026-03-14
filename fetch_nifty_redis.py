@@ -140,9 +140,25 @@ def calculate_market_caps_once():
             return
 
         market_caps.sort(key=lambda x: x[1], reverse=True)
+        
+        # split groups
+        top15 = market_caps[:15]
+        rest35 = market_caps[15:]
 
-        T15 = tuple(market_caps[:15])
-        R35 = tuple(market_caps[15:])
+        # total market caps
+        total_t15_cap = sum(stock[1] for stock in top15)
+        total_r35_cap = sum(stock[1] for stock in rest35)
+
+        # create tuples with weights
+        T15 = tuple(
+            (stock, market_cap, round((market_cap / total_t15_cap) * 100, 4))
+            for stock, market_cap in top15
+        )
+
+        R35 = tuple(
+            (stock, market_cap, round((market_cap / total_r35_cap) * 100, 4))
+            for stock, market_cap in rest35
+        )
 
         redis_client.set("T15", json.dumps(T15))
         redis_client.set("R35", json.dumps(R35))
@@ -155,6 +171,203 @@ def calculate_market_caps_once():
     except Exception as e:
         print(f"Market Cap Error: {e}")
 
+# -------------------------------
+# Calculate R35 Participation & Acceleration
+# -------------------------------
+def calculate_r35_participation_and_acceleration(delta=0.01):
+
+    try:
+        r35 = json.loads(redis_client.get("R35"))
+
+        # load previous metrics
+        metrics_raw = redis_client.get("market_metrics")
+        prev_parti_intra_low = 0
+        prev_parti_intra_high = 0
+
+        if metrics_raw:
+            prev_metrics = json.loads(metrics_raw)
+            prev_parti_intra_low = prev_metrics.get("parti_intra_low", 0)
+            prev_parti_intra_high = prev_metrics.get("parti_intra_high", 0)
+
+        parti_intra_low = 0
+        parti_intra_high = 0
+
+        for stock, mc, weight in r35:
+
+            stock_raw = redis_client.get(stock)
+            if not stock_raw:
+                continue
+
+            data = json.loads(stock_raw)
+
+            LTP = data["close"]
+            day_low = data["day_low"]
+            day_high = data["day_high"]
+
+            low_threshold = day_low + (delta * day_low)
+            high_threshold = day_high - (delta * day_high)
+
+            if LTP > low_threshold:
+                parti_intra_low += 1
+
+            if LTP < high_threshold:
+                parti_intra_high += 1
+
+        # acceleration
+        acc_low = parti_intra_low - prev_parti_intra_low
+        acc_high = parti_intra_high - prev_parti_intra_high
+
+        return parti_intra_low, parti_intra_high, acc_low, acc_high
+
+    except Exception as e:
+        print("Participation Error:", e)
+        return 0,0,0,0
+
+# -------------------------------
+# Calculate Group Strength
+# -------------------------------
+def calculate_group_strength():
+
+    try:
+        t15 = json.loads(redis_client.get("T15"))
+        r35 = json.loads(redis_client.get("R35"))
+
+        # -----------------------
+        # Calculate total market cap
+        # -----------------------
+        total_mc = 0
+
+        for stock, mc, weight in t15:
+            total_mc += mc
+
+        for stock, mc, weight in r35:
+            total_mc += mc
+
+        # -----------------------
+        # T15 calculations
+        # -----------------------
+        t15_net_weight = 0
+        t15_total_mc = 0
+
+        for stock, mc, weight in t15:
+
+            t15_total_mc += mc
+
+            stock_raw = redis_client.get(stock)
+            if not stock_raw:
+                continue
+
+            stock_data = json.loads(stock_raw)
+
+            close = stock_data["close"]
+            prev_close = stock_data["yesterday_close"]
+
+            if not prev_close:
+                continue
+
+            contribution = weight * ((close - prev_close) / close)
+
+            t15_net_weight += contribution
+
+        t15_mc_percent = t15_total_mc / total_mc
+
+        t15_strength = (t15_net_weight / t15_mc_percent) 
+
+        # -----------------------
+        # R35 calculations
+        # -----------------------
+        r35_net_weight = 0
+        r35_total_mc = 0
+
+        for stock, mc, weight in r35:
+
+            r35_total_mc += mc
+
+            stock_raw = redis_client.get(stock)
+            if not stock_raw:
+                continue
+
+            stock_data = json.loads(stock_raw)
+
+            close = stock_data["close"]
+            prev_close = stock_data["yesterday_close"]
+
+            if not prev_close:
+                continue
+
+            contribution = weight * ((close - prev_close) / close)
+
+            r35_net_weight += contribution
+        
+        r35_mc_percent = r35_total_mc / total_mc
+
+        r35_strength = (r35_net_weight / r35_mc_percent)
+
+          # ---- Momentum ----
+        momentum = t15_strength + r35_strength
+
+        # ---- Cap momentum ----
+        cap_momentum = max(-30, min(30, momentum))
+
+        # ---- Normalize ----
+        normalize_mon = ((30 + cap_momentum) / 60) * 100
+        parti_intra_low, parti_intra_high, acc_low, acc_high = calculate_r35_participation_and_acceleration()
+
+        metrics = {
+            "t15_strength": round(t15_strength,4),
+            "r35_strength": round(r35_strength,4),
+            "momentum": round(momentum,4),
+            "cap_momentum": round(cap_momentum,4),
+            "normalize_momentum": round(normalize_mon,2),
+            "parti_intra_low": parti_intra_low,
+            "parti_intra_high": parti_intra_high,
+            "acc_low": acc_low,
+            "acc_high": acc_high
+        }
+
+        # -----------------------
+        # Store in Redis
+        # -----------------------
+
+        redis_client.set("market_metrics", json.dumps(metrics))
+
+        print("t15 mc percent:", round(t15_mc_percent, 4))
+        print("r35 mc percent:", round(r35_mc_percent, 4))
+        print("t15 net weight:", round(t15_net_weight, 4))
+        print("r35 net weight:", round(r35_net_weight, 4))
+
+        print(metrics)
+
+    except Exception as e:
+        print("Strength Calculation Error:", e)
+
+
+# -------------------------------
+# Fetch Day Levels
+# -------------------------------
+def fetch_day_levels(symbol, fyers):
+
+    try:
+        data = {"symbols": symbol}
+
+        response = fyers.quotes(data)
+
+        # print("QUOTE RESPONSE:", symbol, response)
+
+        if "d" not in response or len(response["d"]) == 0:
+            return None
+
+        v = response["d"][0]["v"]
+
+        return {
+            "day_high": v.get("high_price"),
+            "day_low": v.get("low_price"),
+            "yesterday_close": v.get("prev_close_price")
+        }
+
+    except Exception as e:
+        print(f"Quote Error ({symbol}): {e}")
+        return None
 # -------------------------------
 # Fetch Data from Fyers
 # -------------------------------
@@ -228,12 +441,45 @@ def fetch_and_store_data(force=False):
                 if existing_raw:
                     last_timestamp = json.loads(existing_raw)["timestamp"]
 
-                if last_timestamp is None or market_timestamp > last_timestamp:
-                    # Overwrite with only the latest candle
+                if last_timestamp is None or market_timestamp >= last_timestamp:
+
+                    if existing_raw:
+                        existing = json.loads(existing_raw)
+
+                        day_high = max(existing.get("day_high", candle["high"]), candle["high"])
+                        day_low = min(existing.get("day_low", candle["low"]), candle["low"])
+
+                        candle["day_high"] = day_high
+                        candle["day_low"] = day_low
+                        # Fix yesterday_close
+                        if existing.get("yesterday_close") is None:
+
+                            levels = fetch_day_levels(symbol, fyers)
+
+                            if levels:
+                                candle["yesterday_close"] = levels["yesterday_close"]
+                            else:
+                                candle["yesterday_close"] = None
+
+                        else:
+                            candle["yesterday_close"] = existing["yesterday_close"]
+                    else:
+                        # first run → fetch day values
+                        levels = fetch_day_levels(symbol, fyers)
+
+                        if levels:
+                            candle["day_high"] = levels["day_high"]
+                            candle["day_low"] = levels["day_low"]
+                            candle["yesterday_close"] = levels["yesterday_close"]
+                        else:
+                            candle["day_high"] = candle["high"]
+                            candle["day_low"] = candle["low"]
+                            candle["yesterday_close"] = None
+
                     redis_client.set(redis_key, json.dumps(candle))
+
                     print(f"Updated latest candle for {symbol}: {datetime.datetime.fromtimestamp(market_timestamp)}")
-                else:
-                    # No new candle available
+               
                     pass
 
             except Exception as e:
@@ -252,6 +498,9 @@ def fetch_and_store_data(force=False):
 
     # Calculate market caps once
     calculate_market_caps_once()
+    
+    # Calculate group strength
+    calculate_group_strength()
 
     print(f"[{datetime.datetime.now()}] Fetch Cycle Completed")
 
