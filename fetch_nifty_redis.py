@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from fyers_apiv3 import fyersModel
 import redis
 import schedule
-
+from nifty_analytics import run_nifty_once
 # -------------------------------
 # Load environment variables
 # -------------------------------
@@ -183,14 +183,17 @@ def calculate_r35_participation_and_acceleration(delta=0.01):
         metrics_raw = redis_client.get("market_metrics")
         prev_parti_intra_low = 0
         prev_parti_intra_high = 0
+        prev_p_struct = 0
 
         if metrics_raw:
             prev_metrics = json.loads(metrics_raw)
             prev_parti_intra_low = prev_metrics.get("parti_intra_low", 0)
             prev_parti_intra_high = prev_metrics.get("parti_intra_high", 0)
+            prev_p_struct = prev_metrics.get("p_positional", 0)
 
         parti_intra_low = 0
         parti_intra_high = 0
+        p_positional = 0
 
         for stock, mc, weight in r35:
 
@@ -203,6 +206,12 @@ def calculate_r35_participation_and_acceleration(delta=0.01):
             LTP = data["close"]
             day_low = data["day_low"]
             day_high = data["day_high"]
+            y_close = data.get("yesterday_close")
+
+            if y_close:
+                pos_threshold = y_close + (delta * y_close)
+                if LTP > pos_threshold:
+                    p_positional += 1
 
             low_threshold = day_low + (delta * day_low)
             high_threshold = day_high - (delta * day_high)
@@ -212,16 +221,24 @@ def calculate_r35_participation_and_acceleration(delta=0.01):
 
             if LTP < high_threshold:
                 parti_intra_high += 1
+        
+        total_stocks = len(r35)
 
+        parti_intra_low = round((parti_intra_low / total_stocks) * 100, 2)
+        parti_intra_high = round((parti_intra_high / total_stocks) * 100, 2)
+        p_positional = round((p_positional / total_stocks) * 100, 2)
+        
         # acceleration
         acc_low = parti_intra_low - prev_parti_intra_low
         acc_high = parti_intra_high - prev_parti_intra_high
+        a_struct = p_positional - prev_p_struct
 
-        return parti_intra_low, parti_intra_high, acc_low, acc_high
+        return parti_intra_low, parti_intra_high, acc_low, acc_high, p_positional, a_struct
 
     except Exception as e:
         print("Participation Error:", e)
-        return 0,0,0,0
+        return 0,0,0,0,0
+
 
 # -------------------------------
 # Calculate Group Strength
@@ -311,7 +328,7 @@ def calculate_group_strength():
 
         # ---- Normalize ----
         normalize_mon = ((30 + cap_momentum) / 60) * 100
-        parti_intra_low, parti_intra_high, acc_low, acc_high = calculate_r35_participation_and_acceleration()
+        parti_intra_low, parti_intra_high, acc_low, acc_high, p_positional, a_struct = calculate_r35_participation_and_acceleration()
 
         metrics = {
             "t15_strength": round(t15_strength,4),
@@ -322,7 +339,9 @@ def calculate_group_strength():
             "parti_intra_low": parti_intra_low,
             "parti_intra_high": parti_intra_high,
             "acc_low": acc_low,
-            "acc_high": acc_high
+            "acc_high": acc_high,
+            "p_positional": p_positional,
+            "a_struct": a_struct
         }
 
         # -----------------------
@@ -341,6 +360,318 @@ def calculate_group_strength():
     except Exception as e:
         print("Strength Calculation Error:", e)
 
+
+# -------------------------------
+# Calculate Market Regime
+# -------------------------------
+def calculate_market_regime():
+    """
+    Computes regime scores and appends into market_metrics
+    """
+
+    try:
+        # -------------------------------
+        # Load existing metrics
+        # -------------------------------
+        metrics_raw = redis_client.get("market_metrics")
+        if not metrics_raw:
+            return
+        
+        metrics = json.loads(metrics_raw)
+
+        # -------------------------------
+        # Load NIFTY context
+        # -------------------------------
+        context = redis_client.hgetall("NIFTY_CONTEXT_VAR")
+
+        if context:
+            pos = float(context.get("pos", 0))
+            slope = float(context.get("slope", 0))
+            trend_up = int(context.get("trend_up", 0))
+            trend_down = int(context.get("trend_down", 0))
+            rec_ratio = float(context.get("rec_ratio", 0))
+            top_recently = int(context.get("top_recently", 0))
+        else:
+            pos = slope = rec_ratio = 0
+            trend_up = trend_down = top_recently = 0
+
+        # -------------------------------
+        # Market breadth
+        # -------------------------------
+        p_struct = metrics.get("p_positional", 0)
+        p_intra_low = metrics.get("parti_intra_low", 0)
+        p_intra_high = metrics.get("parti_intra_high", 0)
+
+        # -------------------------------
+        # 1) Downtrend
+        # -------------------------------
+        score_down = (
+            20 * (pos < 0.35) +
+            20 * (trend_down == 1) +
+            20 * (slope < 0) +
+            20 * (p_struct < 45) +
+            20 * (p_intra_high > 55)
+        )
+
+        # -------------------------------
+        # 2) Recovery
+        # -------------------------------
+        score_recovery = (
+            20 * (rec_ratio > 0.60) +
+            20 * (pos > 0.50) +
+            20 * (slope > 0) +
+            20 * (p_intra_low > 55) +
+            20 * (p_struct > 50)
+        )
+
+        # -------------------------------
+        # 3) Uptrend
+        # -------------------------------
+        score_up = (
+            20 * (pos > 0.65) +
+            20 * (trend_up == 1) +
+            20 * (slope > 0) +
+            20 * (p_struct > 55) +
+            20 * (p_intra_low > 55)
+        )
+
+        # -------------------------------
+        # 4) Breakdown
+        # -------------------------------
+        score_breakdown = (
+            20 * (top_recently == 1) +
+            20 * (pos < 0.55) +
+            20 * (slope < 0) +
+            20 * (p_intra_high > 55) +
+            20 * (p_struct < 50)
+        )
+
+        # -------------------------------
+        # 5) Chop
+        # -------------------------------
+        score_chop = (
+            20 * (0.35 < pos < 0.65) +
+            20 * (abs(slope) < 5) +
+            20 * (abs(metrics.get("momentum", 0)) < 5) +
+            20 * (45 < p_struct < 55) +
+            20 * (abs(metrics.get("t15_strength", 0)) < 1)
+        )
+
+        # -------------------------------
+        # Final Regime
+        # -------------------------------
+        regime_scores = {
+            "downtrend": score_down,
+            "recovery": score_recovery,
+            "uptrend": score_up,
+            "breakdown": score_breakdown,
+            "chop": score_chop
+        }
+
+        
+        # -------------------------------
+        # Append into metrics (matrix)
+        # -------------------------------
+        metrics.update({
+            "score_down": score_down,
+            "score_recovery": score_recovery,
+            "score_up": score_up,
+            "score_breakdown": score_breakdown,
+            "score_chop": score_chop,
+            
+        })
+
+        # ================================
+        # CI CALCULATION 
+        # ================================
+
+        M = metrics.get("normalize_momentum", 0)
+
+        p_struct = metrics.get("p_positional", 0)
+        p_intra_low = metrics.get("parti_intra_low", 0)
+        p_intra_high = metrics.get("parti_intra_high", 0)
+
+        a_struct = metrics.get("a_struct", 0)
+        a_intra_low = metrics.get("acc_low", 0)
+        a_intra_high = metrics.get("acc_high", 0)
+
+        # -------------------------------
+        # CI PER REGIME
+        # -------------------------------
+
+        ci_down = 0.5*M + 0.3*p_struct + 0.2*a_struct
+
+        ci_recovery = 0.5*M + 0.3*p_intra_low + 0.2*a_intra_low
+
+        ci_up = 0.5*M + 0.3*p_struct + 0.2*a_struct
+
+        ci_breakdown = 0.5*M + 0.3*(100 - p_intra_high) + 0.2*(100 - a_intra_high)
+
+        # Chop special
+        p_chop = 0.5*p_struct + 0.5*p_intra_low
+        ci_chop = 0.5*M + 0.3*p_chop + 0.2*50
+
+        # -------------------------------
+        # WEIGHTS (PROBABILITIES)
+        # -------------------------------
+
+        total_score = score_down + score_recovery + score_up + score_breakdown + score_chop
+
+        if total_score == 0:
+            w_down = w_rec = w_up = w_brk = w_chop = 0
+        else:
+            w_down = score_down / total_score
+            w_rec = score_recovery / total_score
+            w_up = score_up / total_score
+            w_brk = score_breakdown / total_score
+            w_chop = score_chop / total_score
+
+        # -------------------------------
+        # FINAL CI (WEIGHTED 🔥)
+        # -------------------------------
+
+        ci_final = (
+            w_down * ci_down +
+            w_rec * ci_recovery +
+            w_up * ci_up +
+            w_brk * ci_breakdown +
+            w_chop * ci_chop
+        )
+
+        # -------------------------------
+        # ADD TO METRICS (MATRIX)
+        # -------------------------------
+
+        metrics.update({
+            "ci_down": round(ci_down, 2),
+            "ci_recovery": round(ci_recovery, 2),
+            "ci_up": round(ci_up, 2),
+            "ci_breakdown": round(ci_breakdown, 2),
+            "ci_chop": round(ci_chop, 2),
+
+            "w_down": round(w_down, 3),
+            "w_recovery": round(w_rec, 3), 
+            "w_up": round(w_up, 3),
+            "w_breakdown": round(w_brk, 3),
+            "w_chop": round(w_chop, 3),
+
+            "ci_final": round(ci_final, 2)
+        })
+
+        # -------------------------------
+        # Save back
+        # -------------------------------
+        redis_client.set("market_metrics", json.dumps(metrics))
+
+        print("Regime:", regime_scores)
+
+    except Exception as e:
+        print("Regime Error:", e)
+
+def store_market_history():
+    try:
+        # -----------------------------
+        # LOAD MARKET METRICS
+        # -----------------------------
+        metrics_raw = redis_client.get("market_metrics")
+        if not metrics_raw:
+            return
+
+        metrics = json.loads(metrics_raw)
+
+        # -----------------------------
+        # LOAD NIFTY DATA
+        # -----------------------------
+        day_vars = redis_client.hgetall("NIFTY_DAY_VAR")
+        context_vars = redis_client.hgetall("NIFTY_CONTEXT_VAR")
+
+        # ✅ CORRECT WAY
+        sample_stock = redis_client.get("RELIANCE")
+        if not sample_stock:
+            return
+
+        sample_data = json.loads(sample_stock)
+        candle_ts = sample_data.get("timestamp")
+
+        if not candle_ts:
+            return
+
+        candle_dt = datetime.datetime.fromtimestamp(candle_ts)
+
+        date_key = candle_dt.strftime("%Y-%m-%d")
+        time_key = candle_dt.strftime("%H:%M")
+
+        redis_key = "market_history"
+
+        existing = redis_client.hget(redis_key, date_key)
+
+        if existing:
+            day_data = json.loads(existing)
+        else:
+            day_data = {}
+
+        # -----------------------------
+        # COMBINED DATA 🔥
+        # -----------------------------
+        combined = {
+
+            # ===== MARKET =====
+            "t15_strength": metrics.get("t15_strength"),
+            "r35_strength": metrics.get("r35_strength"),
+            "momentum": metrics.get("momentum"),
+            "normalize_momentum": metrics.get("normalize_momentum"),
+
+            "parti_intra_low": metrics.get("parti_intra_low"),
+            "parti_intra_high": metrics.get("parti_intra_high"),
+            "acc_low": metrics.get("acc_low"),
+            "acc_high": metrics.get("acc_high"),
+            "p_positional": metrics.get("p_positional"),
+            "a_struct": metrics.get("a_struct"),
+
+            "score_down": metrics.get("score_down"),
+            "score_recovery": metrics.get("score_recovery"),
+            "score_up": metrics.get("score_up"),
+            "score_breakdown": metrics.get("score_breakdown"),
+            "score_chop": metrics.get("score_chop"),
+
+            "ci_down": metrics.get("ci_down"),
+            "ci_recovery": metrics.get("ci_recovery"),
+            "ci_up": metrics.get("ci_up"),
+            "ci_breakdown": metrics.get("ci_breakdown"),
+            "ci_chop": metrics.get("ci_chop"),
+            "ci_final": metrics.get("ci_final"),
+
+            "w_down": metrics.get("w_down"),
+            "w_recovery": metrics.get("w_recovery"),
+            "w_up": metrics.get("w_up"),
+            "w_breakdown": metrics.get("w_breakdown"),
+            "w_chop": metrics.get("w_chop"),
+
+            # ===== NIFTY (NEW 🔥) =====
+            "nifty_close": float(day_vars.get("close", 0)),
+            "nifty_ema5": float(day_vars.get("EMA5", 0)),
+            "nifty_ema20": float(day_vars.get("EMA20", 0)),
+
+            "nifty_pos": float(context_vars.get("pos", 0)),
+            "nifty_slope": float(context_vars.get("slope", 0)),
+            "nifty_trend_up": int(context_vars.get("trend_up", 0)),
+            "nifty_trend_down": int(context_vars.get("trend_down", 0)),
+
+            "nifty_rec_ratio": float(context_vars.get("rec_ratio", 0)),
+            "nifty_top_recently": int(context_vars.get("top_recently", 0)),
+        }
+
+        # -----------------------------
+        # APPEND
+        # -----------------------------
+        day_data[time_key] = combined
+
+        redis_client.hset(redis_key, date_key, json.dumps(day_data))
+
+        print(f"Saved FULL market + nifty → {date_key} {time_key}")
+
+    except Exception as e:
+        print("History Store Error:", e)        
 
 # -------------------------------
 # Fetch Day Levels
@@ -368,6 +699,44 @@ def fetch_day_levels(symbol, fyers):
     except Exception as e:
         print(f"Quote Error ({symbol}): {e}")
         return None
+
+def initialize_stock_day_levels(symbol, fyers):
+    """
+    Fetch full day history and calculate correct day_high, day_low, day_open
+    """
+
+    today = datetime.datetime.now().strftime("%Y-%m-%d")
+
+    data = {
+        "symbol": symbol,
+        "resolution": "5",
+        "date_format": "1",
+        "range_from": today,
+        "range_to": today,
+        "cont_flag": "1"
+    }
+
+    try:
+        response = fyers.history(data)
+
+        if "candles" not in response or not response["candles"]:
+            return None
+
+        candles = response["candles"]
+
+        day_open = candles[0][1]
+        day_high = max(c[2] for c in candles)
+        day_low = min(c[3] for c in candles)
+
+        return {
+            "day_open": day_open,
+            "day_high": day_high,
+            "day_low": day_low
+        }
+
+    except Exception as e:
+        print(f"Init Error ({symbol}):", e)
+        return None        
 # -------------------------------
 # Fetch Data from Fyers
 # -------------------------------
@@ -381,6 +750,7 @@ def fetch_and_store_data(force=False):
     print(f"\n[{datetime.datetime.now()}] Fetching latest 5-minute candles...")
 
     fyers = fyersModel.FyersModel(
+        
         client_id=CLIENT_ID,
         token=ACCESS_TOKEN,
         log_path=""
@@ -451,33 +821,29 @@ def fetch_and_store_data(force=False):
 
                         candle["day_high"] = day_high
                         candle["day_low"] = day_low
-                        # Fix yesterday_close
+
                         if existing.get("yesterday_close") is None:
-
                             levels = fetch_day_levels(symbol, fyers)
-
-                            if levels:
-                                candle["yesterday_close"] = levels["yesterday_close"]
-                            else:
-                                candle["yesterday_close"] = None
-
+                            candle["yesterday_close"] = levels["yesterday_close"] if levels else None
                         else:
                             candle["yesterday_close"] = existing["yesterday_close"]
+
                     else:
-                        # first run → fetch day values
-                        levels = fetch_day_levels(symbol, fyers)
+
+                        levels = initialize_stock_day_levels(symbol, fyers)
 
                         if levels:
                             candle["day_high"] = levels["day_high"]
                             candle["day_low"] = levels["day_low"]
-                            candle["yesterday_close"] = levels["yesterday_close"]
                         else:
                             candle["day_high"] = candle["high"]
                             candle["day_low"] = candle["low"]
-                            candle["yesterday_close"] = None
 
+                        # yesterday close
+                        q_levels = fetch_day_levels(symbol, fyers)
+                        candle["yesterday_close"] = q_levels["yesterday_close"] if q_levels else None
+                        
                     redis_client.set(redis_key, json.dumps(candle))
-
                     print(f"Updated latest candle for {symbol}: {datetime.datetime.fromtimestamp(market_timestamp)}")
                
                     pass
@@ -501,6 +867,12 @@ def fetch_and_store_data(force=False):
     
     # Calculate group strength
     calculate_group_strength()
+
+    # Calculate market regime
+    calculate_market_regime()
+
+    # Store market history
+    store_market_history()
 
     print(f"[{datetime.datetime.now()}] Fetch Cycle Completed")
 

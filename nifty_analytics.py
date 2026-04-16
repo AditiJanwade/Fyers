@@ -16,6 +16,7 @@ REDIS_HOST = os.getenv("REDIS_HOST")
 REDIS_PORT = int(os.getenv("REDIS_PORT"))
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
 
+fyers = fyersModel.FyersModel(client_id=CLIENT_ID, token=ACCESS_TOKEN,is_async=False, log_path="")
 # -------------------------------
 # Redis Connection
 # -------------------------------
@@ -48,6 +49,8 @@ def is_market_open():
 QUEUE_5 = "NIFTY_CANDLE_QUEUE_5"
 QUEUE_20 = "NIFTY_CANDLE_QUEUE_20"
 DAY_VAR = "NIFTY_DAY_VAR"
+CONTEXT_VAR = "NIFTY_CONTEXT_VAR"
+
 
 def update_nifty_candle_queues(redis_client, candle):
     """
@@ -62,6 +65,7 @@ def update_nifty_candle_queues(redis_client, candle):
     # Update 20-candle queue
     redis_client.lpush(QUEUE_20, candle_json)
     redis_client.ltrim(QUEUE_20, 0, 19)
+
 
 def calculate_nifty_ema(redis_client):
     """
@@ -213,7 +217,7 @@ def initialize_nifty_analytics(redis_client, fyers):
                 "close": latest_close,
                 "date": today_str
             }
-            redis_client.hmset(DAY_VAR, updates)
+            redis_client.hset(DAY_VAR, mapping=updates)
             print(f"Seeded today's stats: Open={day_open}, High={day_high}, Low={day_low}")
             
             # Use last 20 candles for queue seeding (might include some from yesterday if today just started)
@@ -254,7 +258,7 @@ def initialize_nifty_analytics(redis_client, fyers):
                 ema20 = (candle["close"] - ema20) * alpha20 + ema20
 
         # Store final EMAs
-        redis_client.hmset(DAY_VAR, {
+        redis_client.hset(DAY_VAR, mapping={
             "EMA5": round(ema5, 2),
             "EMA20": round(ema20, 2)
         })
@@ -262,6 +266,70 @@ def initialize_nifty_analytics(redis_client, fyers):
 
     except Exception as e:
         print(f"Error during initialization: {e}")
+
+
+
+def calculate_nifty_context(redis_client):
+    vars = redis_client.hgetall(DAY_VAR)
+
+    if not vars:
+        return {}
+
+    try:
+        ltp = float(vars.get("close", 0))
+        day_high = float(vars.get("day_high", 0))
+        day_low = float(vars.get("day_low", 0))
+        ema5 = float(vars.get("EMA5", 0))
+        ema20 = float(vars.get("EMA20", 0))
+        yclose = float(vars.get("yesterday_close", 0))
+    except:
+        return {}
+
+    updates = {}
+
+    # A) Position
+    pos = (ltp - day_low) / (day_high - day_low) if day_high != day_low else 0
+    updates["pos"] = round(pos, 4)
+    updates["pos_pct"] = round(pos * 100, 2)
+
+    # B) Slope
+    prev = redis_client.lindex(QUEUE_5, 1)
+    if prev:
+        prev_close = json.loads(prev)["close"]
+        updates["slope"] = round(ltp - prev_close, 2)
+    else:
+        updates["slope"] = 0
+
+    # C) Trend
+    updates["trend_up"] = 1 if ema5 > ema20 else 0
+    updates["trend_down"] = 1 if ema5 < ema20 else 0
+
+    # D) Recovery
+    if day_low < yclose and (yclose - day_low) != 0:
+        rec = (ltp - day_low) / (yclose - day_low)
+    else:
+        rec = 0
+
+    updates["rec_ratio"] = round(rec, 4)
+    updates["rec_ratio_pct"] = round(rec * 100, 2)
+
+    # E) Top Recently
+    candles = redis_client.lrange(QUEUE_5, 0, 5)
+    pos_list = []
+
+    for c in candles:
+        c = json.loads(c)
+        if day_high != day_low:
+            pos_list.append((c["close"] - day_low) / (day_high - day_low))
+
+    updates["top_recently"] = 1 if pos_list and max(pos_list) > 0.75 else 0
+
+    # SAVE
+    redis_client.hset(CONTEXT_VAR, mapping=updates)
+
+    return updates
+
+
 
 def update_nifty_day_var(redis_client, candle):
     """
@@ -314,9 +382,376 @@ def update_nifty_day_var(redis_client, candle):
     updates["EMA20"] = ema20
     
     if updates:
-        redis_client.hmset(DAY_VAR, updates)
+        redis_client.hset(DAY_VAR, mapping=updates)
     
     return updates
+
+# -------------------------------
+# OI LOCK + RESET LOGIC
+# -------------------------------
+LOCK_KEY = "NIFTY_OI_LOCK"
+
+def get_or_create_lock(redis_client, options, nifty_ltp):
+    lock_data = redis_client.get(LOCK_KEY)
+
+    # -----------------------------
+    # GET DAY OPEN
+    # -----------------------------
+    day_vars = redis_client.hgetall(DAY_VAR)
+    day_open = float(day_vars.get("day_open", 0))
+
+    if lock_data:
+        lock = json.loads(lock_data)
+        base_price = lock["base_price"]
+
+        # RESET if 500 move
+        if abs(nifty_ltp - base_price) >= 500:
+            print("🔁 500 MOVE → RESETTING LOCK")
+            redis_client.delete(LOCK_KEY)
+        else:
+            return lock
+
+    # -----------------------------
+    # CREATE NEW LOCK (USE OPEN 🔥)
+    # -----------------------------
+    base_price = day_open if day_open else nifty_ltp
+
+    strikes = sorted(set(
+        item["strike_price"]
+        for item in options
+        if item["strike_price"] != -1
+    ))
+
+    atm_index = min(range(len(strikes)), key=lambda i: abs(strikes[i] - base_price))
+
+    selected_strikes = strikes[
+        max(0, atm_index - 10): atm_index + 11
+    ]
+
+    lock = {
+        "base_price": base_price,
+        "strikes": selected_strikes
+    }
+
+    redis_client.set(LOCK_KEY, json.dumps(lock))
+
+    print(f"🔒 Lock Created at OPEN {round(base_price)}")
+
+    return lock
+
+
+# -------------------------------
+# OI RATIO CALCULATION
+# -------------------------------
+def calculate_oi_ratio(options, selected_strikes):
+    ce_total = 0
+    pe_total = 0
+
+    ce_atm = 0
+    pe_atm = 0
+
+    atm_strike = selected_strikes[len(selected_strikes)//2]
+    atm_range = [atm_strike - 50, atm_strike, atm_strike + 50]
+
+    for item in options:
+        strike = item["strike_price"]
+
+        if strike in selected_strikes:
+            if item["option_type"] == "CE":
+                ce_total += item["oi"]
+            elif item["option_type"] == "PE":
+                pe_total += item["oi"]
+
+        if strike in atm_range:
+            if item["option_type"] == "CE":
+                ce_atm += item["oi"]
+            elif item["option_type"] == "PE":
+                pe_atm += item["oi"]
+
+    ce_ratio = ce_total / ce_atm if ce_atm else 0
+    pe_ratio = pe_total / pe_atm if pe_atm else 0
+
+    return {
+        "ce_total": ce_total,
+        "pe_total": pe_total,
+        "ce_atm": ce_atm,
+        "pe_atm": pe_atm,
+        "ce_ratio": round(ce_ratio, 2),
+        "pe_ratio": round(pe_ratio, 2)
+    }
+    
+# -------------------------------
+# BUILD OI FEATURE SNAPSHOT
+# -------------------------------
+def build_oi_feature_snapshot(redis_client):
+    try:
+        # -------------------------
+        # MARKET CI
+        # -------------------------
+        metrics = json.loads(redis_client.get("market_metrics") or "{}")
+        ci = metrics.get("ci_final", 0)
+
+        # -------------------------
+        # OI DATA
+        # -------------------------
+        oi_raw = redis_client.get("NIFTY_OI_20")
+        if not oi_raw:
+            return None
+
+        oi_data = json.loads(oi_raw)
+
+        pe_data = {int(k): v for k, v in oi_data.get("PE", {}).items()}
+        ce_data = {int(k): v for k, v in oi_data.get("CE", {}).items()}
+        strikes = oi_data.get("strikes", [])
+        expiry = oi_data.get("expiry")
+
+        if not strikes:
+            return None
+
+        
+        day_vars = redis_client.hgetall("NIFTY_DAY_VAR")
+        # -------------------------
+        # SUPPORT / RESISTANCE (Directional)
+        # -------------------------
+        nifty_price = float(day_vars.get("close", 0))
+
+        atm_index = min(
+            range(len(strikes)),
+            key=lambda i: abs(strikes[i] - nifty_price)
+        )
+
+        # CE → Resistance side (ATM + 1, +2)
+        ce_strikes = strikes[atm_index : min(len(strikes), atm_index + 3)]
+
+        # PE → Support side (ATM, -1, -2)
+        pe_strikes = strikes[max(0, atm_index - 2) : atm_index + 1]
+
+        total_pe = sum(pe_data.values())
+        total_ce = sum(ce_data.values())
+
+        near_pe = sum(pe_data.get(s, 0) for s in pe_strikes)
+        near_ce = sum(ce_data.get(s, 0) for s in ce_strikes)
+
+        support = (near_pe / total_pe * 100) if total_pe else 0
+        resistance = (near_ce / total_ce * 100) if total_ce else 0
+
+        # -------------------------
+        # PCR & OI BIAS
+        # -------------------------
+        pcr = (total_pe / total_ce) if total_ce else 0
+        oi_bias = support - resistance
+
+        # -------------------------
+        # NIFTY SPOT PRICE
+        # -------------------------
+        day_vars = redis_client.hgetall("NIFTY_DAY_VAR")
+        nifty_price = float(day_vars.get("close", 0))
+
+        # -------------------------
+        # NIFTY FUTURE PRICE
+        # -------------------------
+        fut_price = 0
+
+        try:
+            now = datetime.datetime.now()
+
+            year = str(now.year)[-2:]
+            month = now.strftime("%b").upper()
+
+            fut_symbol = f"NSE:NIFTY{year}{month}FUT"
+
+            response = fyers.quotes({"symbols": fut_symbol})
+
+            print("FUT SYMBOL:", fut_symbol)
+            print("FUT RESPONSE:", response)
+
+            if "d" in response and response["d"]:
+                data = response["d"][0]["v"]
+
+                fut_price = data.get("lp") or data.get("last_price") or 0
+
+        except Exception as e:
+            print("FUT Error:", e)  
+
+        # -------------------------
+        # FINAL FEATURE OBJECT
+        # -------------------------
+        return {
+            "ci": round(ci, 2),
+            "support": round(support, 2),
+            "resistance": round(resistance, 2),
+            "oi_bias": round(oi_bias, 2),
+            "pcr": round(pcr, 2),
+            "nifty_price": nifty_price,
+            "nifty_fut_price": fut_price
+        }
+
+    except Exception as e:
+        print("Feature Build Error:", e)
+        return None
+
+def store_oi_feature_snapshot(redis_client):
+    try:
+        features = build_oi_feature_snapshot(redis_client)
+
+
+        if not features:
+            return
+
+        oi_bias = features.get("oi_bias", 0)
+
+        # ALERT CONDITION
+        if oi_bias >= 15:
+            print(f"🚀 STRONG BULLISH BIAS at {datetime.datetime.now().strftime('%H:%M')} → {oi_bias}")
+
+        elif oi_bias <= -15:
+            print(f"🔻 STRONG BEARISH BIAS at {datetime.datetime.now().strftime('%H:%M')} → {oi_bias}")     
+
+        # get latest candle timestamp
+        latest_candle_raw = redis_client.lindex("NIFTY_CANDLE_QUEUE_5", 0)
+
+        if not latest_candle_raw:
+            return
+
+        candle = json.loads(latest_candle_raw)
+
+        candle_time = datetime.datetime.fromtimestamp(candle["timestamp"])
+
+        date_key = candle_time.strftime("%Y-%m-%d")
+        time_key = candle_time.strftime("%H:%M")
+
+        redis_key = "OI_FEATURE_LIVE"
+
+        existing = redis_client.hget(redis_key, date_key)
+
+        if existing:
+            day_data = json.loads(existing)
+        else:
+            day_data = {}
+
+        day_data[time_key] = features
+
+        redis_client.hset(redis_key, date_key, json.dumps(day_data))
+
+        print(f"✅ OI Feature Saved → {time_key}")
+
+    except Exception as e:
+        print("OI Store Error:", e)
+        
+def run_nifty_oi_once(redis_client, fyers):
+    data = {
+        "symbol": "NSE:NIFTY50-INDEX",
+        "strikecount": 50,
+        "timestamp": ""
+    }
+
+    try:
+        response = fyers.optionchain(data=data)
+
+        if response["code"] != 200:
+            print("OI fetch error")
+            return
+
+        redis_client.set("NIFTY_OI_RAW", json.dumps(response))
+
+        raw = response["data"]
+        options = raw["optionsChain"]
+
+        # -----------------------------
+        # 1. LATEST EXPIRY
+        # -----------------------------
+        expiry_list = raw.get("expiryData", [])
+        latest_expiry = expiry_list[0]["date"]
+
+        # -----------------------------
+        # 2. GET LTP (ATM reference)
+        # -----------------------------
+        nifty_ltp = next(
+            item["ltp"] for item in options if item["strike_price"] == -1
+        )
+
+       
+
+        # 🔒 LOCK STRIKES
+        lock = get_or_create_lock(redis_client, options, nifty_ltp)
+        selected_strikes = lock["strikes"]
+
+        # -----------------------------
+        # 3. FILTER CE & PE
+        # -----------------------------
+        ce_data = {}
+        pe_data = {}
+
+        for item in options:
+            strike = item["strike_price"]
+
+            if strike in selected_strikes:
+
+                if item["option_type"] == "CE":
+                    ce_data[strike] = item["oi"]
+
+                elif item["option_type"] == "PE":
+                    pe_data[strike] = item["oi"]
+
+        ratio_data = calculate_oi_ratio(options, selected_strikes)
+        # -----------------------------
+        # 4. STORE IN REDIS
+        # -----------------------------
+        final_data = {
+            "expiry": latest_expiry,
+            "ltp": nifty_ltp,
+            "base_price": lock["base_price"],
+            "strikes": selected_strikes,
+            "CE": ce_data,
+            "PE": pe_data,
+            "analysis": ratio_data, 
+            "timestamp": datetime.datetime.now().strftime("%H:%M:%S")
+        }
+
+        redis_client.set("NIFTY_OI_20", json.dumps(final_data))
+
+        # -----------------------------
+        # STORE OI HISTORY (APPEND)
+        # -----------------------------
+        try:
+            # ✅ Get candle-based time (NOT system time)
+            latest_candle_raw = redis_client.lindex("NIFTY_CANDLE_QUEUE_5", 0)
+
+            if not latest_candle_raw:
+                print("No candle for OI timestamp ❌")
+                return
+
+            candle = json.loads(latest_candle_raw)
+            candle_time = datetime.datetime.fromtimestamp(candle["timestamp"])
+
+            date_key = candle_time.strftime("%Y-%m-%d")
+            time_key = candle_time.strftime("%H:%M")
+
+            history_key = "NIFTY_OI_HISTORY"
+
+            # get existing day data
+            existing = redis_client.hget(history_key, date_key)
+
+            if existing:
+                day_data = json.loads(existing)
+            else:
+                day_data = {}
+
+            # ✅ append (overwrite only same time)
+            day_data[time_key] = final_data
+
+            redis_client.hset(history_key, date_key, json.dumps(day_data))
+
+            print(f"📊 OI HISTORY UPDATED → {time_key}")
+
+        except Exception as e:
+            print("OI History Error:", e)
+
+
+        print("NIFTY OI saved")
+
+    except Exception as e:
+        print("OI Error:", e)    
 
 
 def fetch_nifty_index_candle():
@@ -356,6 +791,18 @@ def fetch_nifty_index_candle():
     
     return None
 
+def run_nifty_once(redis_client, fyers):
+
+    candle = fetch_nifty_index_candle()
+
+    if not candle:
+        return
+
+    update_nifty_candle_queues(redis_client, candle)
+    update_nifty_day_var(redis_client, candle)
+    calculate_nifty_context(redis_client)
+
+oi_done_after_close = False
 
 def main():
     print("NIFTY Analytics System Started")
@@ -368,6 +815,9 @@ def main():
 
     # Robust Initialization from history
     initialize_nifty_analytics(redis_client, fyers)
+    # Calculate context even if market is closed
+    context_updates = calculate_nifty_context(redis_client)
+    print("Initial Context:", context_updates)
     
     while True:
         now = datetime.datetime.now()
@@ -377,29 +827,42 @@ def main():
             # Align with 5-minute interval
             if now.minute % 5 == 0 and now.second < 10:
                 print(f"[{now}] Processing NIFTY candle...")
+                run_nifty_oi_once(redis_client, fyers)
                 candle = fetch_nifty_index_candle()
                 
                 if candle:
                     # Update queues and daily variables
                     update_nifty_candle_queues(redis_client, candle)
                     updates = update_nifty_day_var(redis_client, candle)
-                    print(f"Updated NIFTY Analytics: {updates}")
+                    context_updates = calculate_nifty_context(redis_client)
+
+                    print(f"Day Vars: {updates}")
+                    print(f"Context Vars: {context_updates}")
+                    store_oi_feature_snapshot(redis_client)
+
                 else:
                     print("No candle data available.")
                     
                 # Sleep to avoid multiple processing in same minute
                 time.sleep(60)
+    
+
         else:
-            # When market is closed, we still want to ensure yesterday_close is updated for next day
-            # or if we are just starting up.
-            if now.hour == 9 and now.minute == 0 and now.second < 10:
-                initialize_nifty_analytics(redis_client, fyers)
-                time.sleep(60)
-            
-            # Print heart beat less frequently when market is closed
-            if now.minute % 30 == 0 and now.second < 5:
-                print(f"[{now}] Market is closed. Waiting...")
-                time.sleep(10)
+            global oi_done_after_close   # 👈 IMPORTANT
+
+            # 🔥 Run OI once after market close
+            if not oi_done_after_close:
+                print(f"[{now}] Market closed → saving final OI...")
+
+                run_nifty_oi_once(redis_client, fyers)
+
+                oi_done_after_close = True
+
+                print("🛑 Final OI saved. Stopping system.")
+                break   # ✅ STOP LOOP
+
+            # (optional) still keep heartbeat if needed before break
+            time.sleep(5)
         
         time.sleep(1)
 
