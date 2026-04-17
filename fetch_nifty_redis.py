@@ -737,6 +737,7 @@ def initialize_stock_day_levels(symbol, fyers):
     except Exception as e:
         print(f"Init Error ({symbol}):", e)
         return None        
+        
 # -------------------------------
 # Fetch Data from Fyers
 # -------------------------------

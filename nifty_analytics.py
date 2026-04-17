@@ -395,24 +395,32 @@ def get_or_create_lock(redis_client, options, nifty_ltp):
     lock_data = redis_client.get(LOCK_KEY)
 
     # -----------------------------
-    # GET DAY OPEN
+    # GET DAY VARS
     # -----------------------------
     day_vars = redis_client.hgetall(DAY_VAR)
     day_open = float(day_vars.get("day_open", 0))
+    today_date = day_vars.get("date")
 
     if lock_data:
         lock = json.loads(lock_data)
-        base_price = lock["base_price"]
 
-        # RESET if 500 move
-        if abs(nifty_ltp - base_price) >= 500:
+        lock_date = lock.get("date")   # 👈 ADD THIS
+
+        # ✅ RESET IF NEW DAY
+        if lock_date != today_date:
+            print("🆕 NEW DAY → RESETTING OI LOCK")
+            redis_client.delete(LOCK_KEY)
+
+        # ✅ RESET if 500 move
+        elif abs(nifty_ltp - lock["base_price"]) >= 500:
             print("🔁 500 MOVE → RESETTING LOCK")
             redis_client.delete(LOCK_KEY)
+
         else:
             return lock
 
     # -----------------------------
-    # CREATE NEW LOCK (USE OPEN 🔥)
+    # CREATE NEW LOCK
     # -----------------------------
     base_price = day_open if day_open else nifty_ltp
 
@@ -424,13 +432,12 @@ def get_or_create_lock(redis_client, options, nifty_ltp):
 
     atm_index = min(range(len(strikes)), key=lambda i: abs(strikes[i] - base_price))
 
-    selected_strikes = strikes[
-        max(0, atm_index - 10): atm_index + 11
-    ]
+    selected_strikes = strikes[max(0, atm_index - 10): atm_index + 11]
 
     lock = {
         "base_price": base_price,
-        "strikes": selected_strikes
+        "strikes": selected_strikes,
+        "date": today_date   # 👈 STORE DATE
     }
 
     redis_client.set(LOCK_KEY, json.dumps(lock))
@@ -438,8 +445,6 @@ def get_or_create_lock(redis_client, options, nifty_ltp):
     print(f"🔒 Lock Created at OPEN {round(base_price)}")
 
     return lock
-
-
 # -------------------------------
 # OI RATIO CALCULATION
 # -------------------------------

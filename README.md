@@ -75,6 +75,7 @@ run_cycle()
 ---
 
 #### 3️⃣ Fetch NIFTY 50 Stock Data
+in fetch_nifty_redis.py
 
 * Function: `fetch_and_store_data()`
 
@@ -146,7 +147,7 @@ For each stock:
 ---
 
 #### 6️⃣ Build OI Features & Signals
-
+in nifty_analytics.py
 * Function: `store_oi_feature_snapshot()`
 
 Generates:
