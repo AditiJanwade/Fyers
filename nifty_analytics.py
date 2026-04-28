@@ -518,6 +518,7 @@ def build_oi_feature_snapshot(redis_client):
         # -------------------------
         # SUPPORT / RESISTANCE (Directional)
         # -------------------------
+        # nifty_price = float(day_vars.get("close", 0))
         nifty_price = float(day_vars.get("close", 0))
 
         atm_index = min(
@@ -525,26 +526,61 @@ def build_oi_feature_snapshot(redis_client):
             key=lambda i: abs(strikes[i] - nifty_price)
         )
 
-        # CE → Resistance side (ATM + 1, +2)
-        ce_strikes = strikes[atm_index : min(len(strikes), atm_index + 3)]
+         # CE → Resistance side (ATM to ATM + 3)
+        ce_strikes = strikes[atm_index : min(len(strikes), atm_index + 4)]
 
-        # PE → Support side (ATM, -1, -2)
-        pe_strikes = strikes[max(0, atm_index - 2) : atm_index + 1]
+        # PE → Support side (ATM to ATM - 3)
+        pe_strikes = strikes[max(0, atm_index - 3) : atm_index + 1]
+
+        # Local OI sums
+        support_sum = sum(float(pe_data.get(s, 0)) for s in pe_strikes)
+        resistance_sum = sum(float(ce_data.get(s, 0)) for s in ce_strikes)
 
         total_pe = sum(pe_data.values())
         total_ce = sum(ce_data.values())
+        # # CE → Resistance side (ATM + 1, +2)
+        # ce_strikes = strikes[atm_index : min(len(strikes), atm_index + 3)]
 
-        near_pe = sum(pe_data.get(s, 0) for s in pe_strikes)
-        near_ce = sum(ce_data.get(s, 0) for s in ce_strikes)
+        # # PE → Support side (ATM, -1, -2)
+        # pe_strikes = strikes[max(0, atm_index - 2) : atm_index + 1]
 
-        support = (near_pe / total_pe * 100) if total_pe else 0
-        resistance = (near_ce / total_ce * 100) if total_ce else 0
+        # near_pe = sum(pe_data.get(s, 0) for s in pe_strikes)
+        # near_ce = sum(ce_data.get(s, 0) for s in ce_strikes)
+
+        # support = (near_pe / total_pe * 100) if total_pe else 0
+        # resistance = (near_ce / total_ce * 100) if total_ce else 0
 
         # -------------------------
         # PCR & OI BIAS
         # -------------------------
         pcr = (total_pe / total_ce) if total_ce else 0
-        oi_bias = support - resistance
+        # oi_bias = support - resistance
+
+        denominator = support_sum + resistance_sum
+
+        if denominator == 0:
+            oi_bias = 0
+        else:
+            oi_bias = ((resistance_sum - support_sum) / denominator) * 100
+
+        # ---------------------------------
+        # FULL LOCKED STRIKE (20/21) VALUES
+        # ---------------------------------
+
+        all_strikes = strikes
+
+        support_20 = sum(float(pe_data.get(s, 0)) for s in all_strikes)
+
+        resistance_20 = sum(float(ce_data.get(s, 0)) for s in all_strikes)
+
+        pcr_20 = support_20 / resistance_20 if resistance_20 else 0
+
+        denominator_20 = support_20 + resistance_20
+
+        if denominator_20 == 0:
+            oi_bias_20 = 0
+        else:
+            oi_bias_20 = ((resistance_20 - support_20) / denominator_20) * 100    
 
         # -------------------------
         # NIFTY SPOT PRICE
@@ -583,10 +619,14 @@ def build_oi_feature_snapshot(redis_client):
         # -------------------------
         return {
             "ci": round(ci, 2),
-            "support": round(support, 2),
-            "resistance": round(resistance, 2),
+            "support_sum": round(support_sum, 2),
+            "resistance_sum": round(resistance_sum, 2),
             "oi_bias": round(oi_bias, 2),
             "pcr": round(pcr, 2),
+            "support_20": round(support_20, 2),
+            "resistance_20": round(resistance_20, 2),
+            "oi_bias_20": round(oi_bias_20, 2),
+            "pcr_20": round(pcr_20, 2),
             "nifty_price": nifty_price,
             "nifty_fut_price": fut_price
         }
@@ -598,7 +638,10 @@ def build_oi_feature_snapshot(redis_client):
 def store_oi_feature_snapshot(redis_client):
     try:
         features = build_oi_feature_snapshot(redis_client)
-
+        print("-------------features--------------")
+        for key, value in features.items():
+            print(f"{key}: {value}")
+        print("-----------------------------------")
 
         if not features:
             return
@@ -607,10 +650,10 @@ def store_oi_feature_snapshot(redis_client):
 
         # ALERT CONDITION
         if oi_bias >= 15:
-            print(f"🚀 STRONG BULLISH BIAS at {datetime.datetime.now().strftime('%H:%M')} → {oi_bias}")
+            print(f"🔻 STRONG BEARISH BIAS  at {datetime.datetime.now().strftime('%H:%M')} → {oi_bias}")
 
         elif oi_bias <= -15:
-            print(f"🔻 STRONG BEARISH BIAS at {datetime.datetime.now().strftime('%H:%M')} → {oi_bias}")     
+            print(f"🚀 STRONG BULLISH BIAS  at {datetime.datetime.now().strftime('%H:%M')} → {oi_bias}")     
 
         # get latest candle timestamp
         latest_candle_raw = redis_client.lindex("NIFTY_CANDLE_QUEUE_5", 0)
