@@ -22,32 +22,73 @@ st.set_page_config(
     page_icon="📈",
     layout="wide"
 )
+
+# Auto refresh every 30 sec
 st_autorefresh(interval=30000, key="live_refresh")
-# -----------------------------------
-# CUSTOM CSS
-# -----------------------------------
+
 st.markdown("""
 <style>
 html, body, [class*="css"] {
     font-family: Arial, sans-serif;
 }
 
-[data-testid="metric-container"] {
-    background: linear-gradient(135deg, #111827, #1f2937);
-    border: 1px solid #374151;
-    padding: 18px;
-    border-radius: 14px;
-    box-shadow: 0 0 8px rgba(0,0,0,0.25);
+/* remove top empty gap */
+.main .block-container{
+    padding-top:0.2rem !important;
+    padding-bottom:0rem !important;
+    padding-left:1rem !important;
+    padding-right:1rem !important;
+    max-width:100% !important;
 }
 
-h1, h2, h3 {
-    color: white;
+/* hide top header gap */
+header[data-testid="stHeader"]{
+    height:0rem;
+}
+
+section.main > div{
+    padding-top:0rem !important;
+}
+
+/* metric cards */
+[data-testid="metric-container"]{
+    background:linear-gradient(135deg,#111827,#1f2937);
+    border:1px solid #374151;
+    padding:6px !important;
+    border-radius:10px;
+    margin-bottom:4px !important;
+}
+
+/* metric label */
+[data-testid="metric-container"] label{
+    font-size:11px !important;
+}
+
+/* metric value */
+[data-testid="stMetricValue"]{
+    font-size:18px !important;
+    line-height:1 !important;
+}
+
+/* titles */
+h1{
+    font-size:28px !important;
+    margin-bottom:0rem !important;
+}
+
+h2,h3{
+    font-size:18px !important;
+    margin-bottom:0rem !important;
+}
+
+footer{
+    visibility:hidden;
 }
 </style>
 """, unsafe_allow_html=True)
 
 # -----------------------------------
-# REDIS CONNECTION
+# REDIS
 # -----------------------------------
 r = redis.Redis(
     host=os.getenv("REDIS_HOST"),
@@ -63,7 +104,7 @@ today = datetime.now().strftime("%Y-%m-%d")
 raw = r.hget("OI_FEATURE_LIVE", today)
 
 if not raw:
-    st.error("No Data Found in Redis.")
+    st.error("No Data Found")
     st.stop()
 
 data = json.loads(raw)
@@ -83,45 +124,107 @@ latest = df.iloc[-1]
 plot_config = {
     "scrollZoom": True,
     "displayModeBar": True,
-    "displaylogo": False,
-    "modeBarButtonsToRemove": ["lasso2d", "select2d"]
+    "displaylogo": False
 }
 
 # -----------------------------------
 # TITLE
 # -----------------------------------
-st.title("📈 NIFTY LIVE OI DASHBOARD")
-st.caption(f"Last Updated: {latest['time']}")
+st.markdown("## 📈 NIFTY LIVE OI DASHBOARD")
+st.caption(f"Updated: {latest['time']}")
+
+# ==================================================
+# TOP SECTION
+# LEFT = DATA
+# RIGHT = NIFTY CHART
+# ==================================================
+left, right = st.columns([1, 2])
 
 # -----------------------------------
-# KPI CARDS
+# LEFT KPI DATA
 # -----------------------------------
-st.subheader("📌 Live KPI Metrics")
+# -----------------------------------
+# LEFT KPI DATA
+# Replace your current "with left:" block with this
+# -----------------------------------
+with left:
+    st.subheader("📌 Live Data")
 
-r1 = st.columns(5)
-r1[0].metric("CI", round(latest["ci"], 2))
-r1[1].metric("OI Bias", round(latest["oi_bias"], 2))
-r1[2].metric("PCR", round(latest["pcr"], 2))
-r1[3].metric("PCR 20", round(latest["pcr_20"], 2))
-r1[4].metric("OI Bias 20", round(latest["oi_bias_20"], 2))
+    c1, c2 = st.columns(2)
+    c1.metric("CI", round(latest["ci"], 2))
+    c2.metric("OI Bias", round(latest["oi_bias"], 2))
 
-r2 = st.columns(4)
-r2[0].metric("Support", round(latest["support_sum"], 2))
-r2[1].metric("Resistance", round(latest["resistance_sum"], 2))
-r2[2].metric("Support 20", round(latest["support_20"], 2))
-r2[3].metric("Resistance 20", round(latest["resistance_20"], 2))
+    c3, c4 = st.columns(2)
+    c3.metric("PCR", round(latest["pcr"], 2))
+    c4.metric("OI Bias 20", round(latest["oi_bias_20"], 2))
 
-r3 = st.columns(2)
-r3[0].metric("NIFTY", round(latest["nifty_price"], 2))
-r3[1].metric("FUTURE", round(latest["nifty_fut_price"], 2))
+    c5, c6 = st.columns(2)
+    c5.metric("PCR 20", round(latest["pcr_20"], 2))
+    c6.metric("NIFTY", round(latest["nifty_price"], 2))
+
+    c7, c8 = st.columns(2)
+    c7.metric("FUTURE", round(latest["nifty_fut_price"], 2))
+    c8.metric("Support", round(latest["support_sum"], 2))
+
+    c9, c10 = st.columns(2)
+    c9.metric("Resistance", round(latest["resistance_sum"], 2))
+    c10.metric("Support 20", round(latest["support_20"], 2))
+
+    c11, c12 = st.columns(2)
+    c11.metric("Resistance 20", round(latest["resistance_20"], 2))
+# -----------------------------------
+# RIGHT NIFTY CHART
+# -----------------------------------
+with right:
+    fig_price = go.Figure()
+
+    fig_price.add_trace(go.Scatter(
+        x=df["time"],
+        y=df["nifty_price"],
+        mode="lines+markers",
+        name="NIFTY",
+        line=dict(color="cyan", width=4),
+        marker=dict(size=5),
+        hovertemplate="Time: %{x}<br>NIFTY: %{y:.2f}<extra></extra>"
+    ))
+
+    fig_price.update_layout(
+        title="📈 NIFTY LIVE",
+        template="plotly_dark",
+        height=360,
+        margin=dict(l=10, r=10, t=40, b=10),
+
+        xaxis=dict(
+            title="Time",
+            showgrid=False,
+            tickangle=-35
+        ),
+
+        yaxis=dict(
+            title="NIFTY",
+            showgrid=True,
+            tickformat=".0f"   # shows actual values like 24263
+        ),
+
+        hovermode="x unified"
+    )
+
+    st.plotly_chart(
+        fig_price,
+        use_container_width=True,
+        config=plot_config
+    )
+# ==================================================
+# BOTTOM SECTION
+# LEFT = OI BIAS
+# RIGHT = PCR
+# ==================================================
+b1, b2 = st.columns(2)
 
 # -----------------------------------
-# CHARTS
+# OI BIAS CHART
 # -----------------------------------
-col1, col2 = st.columns(2)
-
-# ---------------- OI BIAS ----------------
-with col1:
+with b1:
     fig = go.Figure()
 
     fig.add_trace(go.Scatter(
@@ -129,8 +232,7 @@ with col1:
         y=df["oi_bias"],
         mode="lines+markers",
         name="OI Bias",
-        line=dict(color="lime", width=4),
-        marker=dict(size=6)
+        line=dict(color="lime", width=4)
     ))
 
     fig.add_trace(go.Scatter(
@@ -138,8 +240,7 @@ with col1:
         y=df["oi_bias_20"],
         mode="lines+markers",
         name="OI Bias 20",
-        line=dict(color="orange", width=4),
-        marker=dict(size=6)
+        line=dict(color="orange", width=4)
     ))
 
     fig.add_hrect(y0=15, y1=100, fillcolor="green", opacity=0.08, line_width=0)
@@ -148,26 +249,16 @@ with col1:
     fig.update_layout(
         title="🔥 OI Bias Trend",
         template="plotly_dark",
-        height=550,
-        dragmode="zoom",
-        hovermode="x unified",
-        xaxis=dict(
-            title="Time",
-            rangeslider=dict(visible=True),
-            showspikes=True,
-            spikemode="across",
-            spikesnap="cursor"
-        ),
-        yaxis=dict(
-            title="Bias",
-            showspikes=True
-        )
+        height=380,
+        margin=dict(l=10, r=10, t=40, b=10)
     )
 
     st.plotly_chart(fig, use_container_width=True, config=plot_config)
 
-# ---------------- PCR ----------------
-with col2:
+# -----------------------------------
+# PCR CHART
+# -----------------------------------
+with b2:
     fig2 = go.Figure()
 
     fig2.add_trace(go.Scatter(
@@ -175,8 +266,7 @@ with col2:
         y=df["pcr"],
         mode="lines+markers",
         name="PCR",
-        line=dict(color="deepskyblue", width=4),
-        marker=dict(size=6)
+        line=dict(color="deepskyblue", width=4)
     ))
 
     fig2.add_trace(go.Scatter(
@@ -184,8 +274,7 @@ with col2:
         y=df["pcr_20"],
         mode="lines+markers",
         name="PCR 20",
-        line=dict(color="violet", width=4),
-        marker=dict(size=6)
+        line=dict(color="violet", width=4)
     ))
 
     fig2.add_hline(y=1, line_dash="dash", line_color="white")
@@ -193,18 +282,8 @@ with col2:
     fig2.update_layout(
         title="📊 PCR Trend",
         template="plotly_dark",
-        height=550,
-        dragmode="zoom",
-        hovermode="x unified",
-        xaxis=dict(
-            title="Time",
-            rangeslider=dict(visible=True),
-            showspikes=True
-        ),
-        yaxis=dict(
-            title="PCR",
-            showspikes=True
-        )
+        height=380,
+        margin=dict(l=10, r=10, t=40, b=10)
     )
 
     st.plotly_chart(fig2, use_container_width=True, config=plot_config)
@@ -216,27 +295,32 @@ st.subheader("⚡ CI Final Graph")
 
 fig3 = go.Figure()
 
-fig3.add_trace(go.Bar(
+fig3.add_trace(go.Scatter(
     x=df["time"],
     y=df["ci"],
-    marker_color="cyan",
-    name="CI"
+    mode="lines+markers",
+    name="CI",
+    line=dict(color="cyan", width=4),
+    marker=dict(size=5),
+    hovertemplate="Time: %{x}<br>CI: %{y:.2f}<extra></extra>"
 ))
 
 fig3.update_layout(
     title="⚡ CI Final Graph",
     template="plotly_dark",
-    height=450,
-    dragmode="zoom",
+    height=420,
+    margin=dict(l=10, r=10, t=40, b=10),
     hovermode="x unified",
+
     xaxis=dict(
         title="Time",
-        rangeslider=dict(visible=True),
-        showspikes=True
+        tickangle=-35,
+        rangeslider=dict(visible=True)
     ),
+
     yaxis=dict(
         title="CI",
-        showspikes=True
+        showgrid=True
     )
 )
 

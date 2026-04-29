@@ -553,7 +553,7 @@ def build_oi_feature_snapshot(redis_client):
         # -------------------------
         # PCR & OI BIAS
         # -------------------------
-        pcr = (total_pe / total_ce) if total_ce else 0
+        pcr = (support_sum / resistance_sum ) if resistance_sum else 0
         # oi_bias = support - resistance
 
         denominator = support_sum + resistance_sum
@@ -591,29 +591,51 @@ def build_oi_feature_snapshot(redis_client):
         # -------------------------
         # NIFTY FUTURE PRICE
         # -------------------------
+        # -------------------------
+        # NIFTY FUTURE PRICE (AUTO ACTIVE CONTRACT)
+        # -------------------------
         fut_price = 0
 
         try:
             now = datetime.datetime.now()
 
+            months = [
+                "JAN","FEB","MAR","APR","MAY","JUN",
+                "JUL","AUG","SEP","OCT","NOV","DEC"
+            ]
+
             year = str(now.year)[-2:]
-            month = now.strftime("%b").upper()
+            curr_idx = now.month - 1
 
-            fut_symbol = f"NSE:NIFTY{year}{month}FUT"
+            # try current month + next month
+            symbols_to_try = []
 
-            response = fyers.quotes({"symbols": fut_symbol})
+            curr_month = months[curr_idx]
+            next_month = months[(curr_idx + 1) % 12]
 
-            print("FUT SYMBOL:", fut_symbol)
-            print("FUT RESPONSE:", response)
+            symbols_to_try.append(f"NSE:NIFTY{year}{curr_month}FUT")
+            symbols_to_try.append(f"NSE:NIFTY{year}{next_month}FUT")
 
-            if "d" in response and response["d"]:
-                data = response["d"][0]["v"]
+            for fut_symbol in symbols_to_try:
 
-                fut_price = data.get("lp") or data.get("last_price") or 0
+                response = fyers.quotes({"symbols": fut_symbol})
+
+                print("TRY FUT SYMBOL:", fut_symbol)
+                print("FUT RESPONSE:", response)
+
+                if "d" in response and response["d"]:
+
+                    data = response["d"][0].get("v", {})
+
+                    price = data.get("lp") or data.get("last_price") or 0
+
+                    if price and price > 0:
+                        fut_price = price
+                        print("ACTIVE FUT FOUND:", fut_symbol, fut_price)
+                        break
 
         except Exception as e:
-            print("FUT Error:", e)  
-
+            print("FUT Error:", e)
         # -------------------------
         # FINAL FEATURE OBJECT
         # -------------------------
