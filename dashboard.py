@@ -152,26 +152,27 @@ with left:
 
     c1, c2 = st.columns(2)
     c1.metric("CI", round(latest["ci"], 2))
-    c2.metric("OI Bias", round(latest["oi_bias"], 2))
+    c2.metric("NIFTY", round(latest["nifty_price"], 2))
 
     c3, c4 = st.columns(2)
-    c3.metric("PCR", round(latest["pcr"], 2))
+    c3.metric("OI Bias", round(latest["oi_bias"], 2))
     c4.metric("OI Bias 20", round(latest["oi_bias_20"], 2))
 
     c5, c6 = st.columns(2)
-    c5.metric("PCR 20", round(latest["pcr_20"], 2))
-    c6.metric("NIFTY", round(latest["nifty_price"], 2))
+    c5.metric("PCR", round(latest["pcr"], 2))
+    c6.metric("PCR 20", round(latest["pcr_20"], 2))
 
     c7, c8 = st.columns(2)
-    c7.metric("FUTURE", round(latest["nifty_fut_price"], 2))
-    c8.metric("Support", round(latest["support_sum"], 2))
+    c7.metric("Support", round(latest["support_sum"], 2))
+    c8.metric("Resistance", round(latest["resistance_sum"], 2))
 
     c9, c10 = st.columns(2)
-    c9.metric("Resistance", round(latest["resistance_sum"], 2))
-    c10.metric("Support 20", round(latest["support_20"], 2))
+    c9.metric("Support 20", round(latest["support_20"], 2))
+    c10.metric("Resistance 20", round(latest["resistance_20"], 2))
 
     c11, c12 = st.columns(2)
-    c11.metric("Resistance 20", round(latest["resistance_20"], 2))
+    c12.metric("FUTURE", round(latest["nifty_fut_price"], 2))
+    
 # -----------------------------------
 # RIGHT NIFTY CHART
 # -----------------------------------
