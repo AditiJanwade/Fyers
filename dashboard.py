@@ -103,11 +103,45 @@ r = redis.Redis(
 # -----------------------------------
 # LOAD DATA
 # -----------------------------------
+# -----------------------------------
+# LOAD DATA + DATE FILTER
+# -----------------------------------
+all_dates = r.hkeys("OI_FEATURE_LIVE")
+
+if not all_dates:
+    st.error("No Data Found")
+    st.stop()
+
+# sort latest first
+all_dates = sorted(all_dates, reverse=True)
+
 today = datetime.now().strftime("%Y-%m-%d")
-raw = r.hget("OI_FEATURE_LIVE", today)
+
+# default = today if available
+default_index = 0
+if today in all_dates:
+    default_index = all_dates.index(today)
+
+top1, top2 = st.columns([3,1])
+
+with top1:
+    st.markdown("""
+    <h2 style='margin:0; padding:0; color:white;'>
+    📈 NIFTY LIVE OI DASHBOARD
+    </h2>
+    """, unsafe_allow_html=True)
+
+with top2:
+    selected_date = st.selectbox(
+        "📅 Select Date",
+        all_dates,
+        index=default_index
+    )
+
+raw = r.hget("OI_FEATURE_LIVE", selected_date)
 
 if not raw:
-    st.error("No Data Found")
+    st.error("No Data Found For Selected Date")
     st.stop()
 
 data = json.loads(raw)
@@ -136,7 +170,7 @@ plot_config = {
 # LEFT = DATA
 # RIGHT = NIFTY CHART
 # ==================================================
-left, right = st.columns([1,1.5])
+left, right = st.columns([1.3,2.1])
 
 # -----------------------------------
 # LEFT KPI DATA
@@ -161,42 +195,55 @@ def color_metric(label, value, color):
     </div>
     """
     st.markdown(html, unsafe_allow_html=True)
-with left:
-    st.markdown("## 📈 NIFTY LIVE OI DASHBOARD")
-    st.caption(f"Updated: {latest['time']}")
-    st.subheader("📌 Live Data")
 
-    c1, c2,c3 = st.columns(3)
-    c1.metric("NIFTY", round(latest["nifty_price"], 2))
-    c2.metric("FUTURE", round(latest["nifty_fut_price"], 2))
-    c3.metric("CI", round(latest["ci"], 2))
-
-    c4, c5 = st.columns(2)
-    c4.metric("OI Bias", round(latest["oi_bias"], 2))
-    c5.metric("OI Bias 20", round(latest["oi_bias_20"], 2))
-
-    c6, c7 = st.columns(2)
-    c6.metric("PCR", round(latest["pcr"], 2))
-    c7.metric("PCR 20", round(latest["pcr_20"], 2))
-
-    c8, c9 = st.columns(2)
-
-    with c8:
-        color_metric("Support", round(latest["support_sum"], 2), "#a78bfa")   # violet
-
-    with c9:
-        color_metric("Resistance", round(latest["resistance_sum"], 2), "#fb923c")   # orange
-
-
-    c10, c11 = st.columns(2)
-
-    with c10:
-        color_metric("Support 20", round(latest["support_20"], 2), "#c4b5fd")   # lavender
-
-    with c11:
-        color_metric("Resistance 20", round(latest["resistance_20"], 2), "#fdba74")   # peach
 
     
+with left:
+    
+    if selected_date == today:
+        st.caption(f"🔴 LIVE | {selected_date} | Updated: {latest['time']}")
+    else:
+        st.caption(f"📅 Historical View | {selected_date}")
+    st.subheader("📌 Live Data")
+
+    # TOP LINE - ALL DATA IN ONE ROW
+    c1,c2,c3,c4,c5,c6,c7 = st.columns(7)
+
+    with c1:
+        color_metric("NIFTY", round(latest["nifty_price"],2), "#00F5FF")   # cyan
+
+    with c2:
+        color_metric("FUTURE", round(latest["nifty_fut_price"],2), "#F59E0B")   # orange
+
+    with c3:
+        color_metric("CI", round(latest["ci"],2), "#38BDF8")   # sky blue
+
+    with c4:
+        color_metric("OI Bias", round(latest["oi_bias"],2), "#A78BFA")   # violet
+
+    with c5:
+        color_metric("OI Bias20", round(latest["oi_bias_20"],2), "#FACC15")   # gold
+
+    with c6:
+        color_metric("PCR", round(latest["pcr"],2), "#22D3EE")   # blue cyan
+
+    with c7:
+        color_metric("PCR20", round(latest["pcr_20"],2), "#E879F9")   # pink purple
+
+    # SECOND LINE - SUPPORT / RESISTANCE
+    s1,s2,s3,s4 = st.columns(4)
+
+    with s1:
+        color_metric("Support", round(latest["support_sum"],2), "#C4B5FD")
+
+    with s2:
+        color_metric("Resistance", round(latest["resistance_sum"],2), "#FB923C")
+
+    with s3:
+        color_metric("Support20", round(latest["support_20"],2), "#93C5FD")
+
+    with s4:
+        color_metric("Resistance20", round(latest["resistance_20"],2), "#FDBA74")
     
 # -----------------------------------
 # RIGHT NIFTY CHART
@@ -269,7 +316,7 @@ with b1:
         y=df["oi_bias"],
         mode="lines+markers",
         name="OI Bias",
-        line=dict(color="lime", width=4)
+        line=dict(color="#A78BFA", width=4)
     ))
 
     fig.add_trace(go.Scatter(
@@ -277,11 +324,11 @@ with b1:
         y=df["oi_bias_20"],
         mode="lines+markers",
         name="OI Bias 20",
-        line=dict(color="orange", width=4)
+        line=dict(color="#FACC15", width=4)
     ))
 
-    fig.add_hrect(y0=15, y1=100, fillcolor="green", opacity=0.08, line_width=0)
-    fig.add_hrect(y0=-100, y1=-15, fillcolor="red", opacity=0.08, line_width=0)
+    fig.add_hrect(y0=15, y1=100, fillcolor="#A78BFA", opacity=0.08, line_width=0)
+    fig.add_hrect(y0=-100, y1=-15, fillcolor="#FACC15", opacity=0.08, line_width=0)
 
     fig.update_layout(
         title={
