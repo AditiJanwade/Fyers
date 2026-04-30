@@ -23,8 +23,8 @@ st.set_page_config(
     layout="wide"
 )
 
-# Auto refresh every 30 sec
-st_autorefresh(interval=30000, key="live_refresh")
+# Auto refresh every 15 sec
+st_autorefresh(interval=15000, key="live_refresh")
 
 st.markdown("""
 <style>

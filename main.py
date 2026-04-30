@@ -273,6 +273,8 @@ if __name__ == "__main__":
     print("System started 🚀")
 
     login()
+    print("⏳ Waiting for token to stabilize...")
+    time.sleep(3) 
     init_nifty()
 
     run_cycle()
