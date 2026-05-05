@@ -153,30 +153,7 @@ for t, v in data.items():
     rows.append(row)
 
 df = pd.DataFrame(rows).sort_values("time")
-# ✅ HANDLE MISSING DATA (VERY IMPORTANT)
-required_cols = [
-    "trending_ce",
-    "trending_pe",
-    "nifty_price",
-    "nifty_fut_price",
-    "oi_bias",
-    "oi_bias_20",
-    "pcr",
-    "pcr_20",
-    "support_sum",
-    "resistance_sum",
-    "support_20",
-    "resistance_20",
-    "ci"
-]
 
-for col in required_cols:
-    if col not in df.columns:
-        df[col] = 0
-
-    df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-
-# refresh latest after cleaning
 latest = df.iloc[-1]
 
 
@@ -195,7 +172,7 @@ plot_config = {
 # LEFT = DATA
 # RIGHT = NIFTY CHART
 # ==================================================
-left, right = st.columns([1.3,2.1])
+left, right = st.columns([1.1,2.1])
 
 # -----------------------------------
 # LEFT KPI DATA
@@ -290,7 +267,7 @@ with right:
     # 🔴 Trending CE (Resistance Line)
     fig_price.add_trace(go.Scatter(
         x=df["time"],
-        y=df["trending_ce"],
+        y=df["top_ce_strike"],
         mode="lines",
         name="Trending CE",
         line=dict(color="#ef4444", width=2, dash="dash"),
@@ -300,7 +277,7 @@ with right:
     # 🟢 Trending PE (Support Line)
     fig_price.add_trace(go.Scatter(
         x=df["time"],
-        y=df["trending_pe"],
+        y=df["top_pe_strike"],
         mode="lines",
         name="Trending PE",
         line=dict(color="#22c55e", width=2, dash="dash"),
@@ -374,7 +351,7 @@ with b1:
         y=df["oi_bias"],
         mode="lines+markers",
         name="OI Bias",
-        line=dict(color="#A78BFA", width=4)
+        line=dict(color="#A78BFA", width=2)
     ))
 
     fig.add_trace(go.Scatter(
@@ -382,7 +359,7 @@ with b1:
         y=df["oi_bias_20"],
         mode="lines+markers",
         name="OI Bias 20",
-        line=dict(color="#FACC15", width=4)
+        line=dict(color="#FACC15", width=2)
     ))
 
     fig.add_hrect(y0=15, y1=100, fillcolor="#A78BFA", opacity=0.08, line_width=0)
@@ -415,7 +392,7 @@ with b2:
         y=df["pcr"],
         mode="lines+markers",
         name="PCR",
-        line=dict(color="deepskyblue", width=4)
+        line=dict(color="deepskyblue", width=2)
     ))
 
     fig2.add_trace(go.Scatter(
@@ -423,7 +400,7 @@ with b2:
         y=df["pcr_20"],
         mode="lines+markers",
         name="PCR 20",
-        line=dict(color="violet", width=4)
+        line=dict(color="violet", width=2)
     ))
 
     fig2.add_hline(y=1, line_dash="dash", line_color="white")
@@ -456,7 +433,7 @@ with s1:
         y=df["support_sum"],
         mode="lines+markers",
         name="Support",
-        line=dict(color="#a78bfa", width=3)
+        line=dict(color="#a78bfa", width=2)
     ))
 
     fig_sr.add_trace(go.Scatter(
@@ -464,7 +441,7 @@ with s1:
         y=df["resistance_sum"],
         mode="lines+markers",
         name="Resistance",
-        line=dict(color="#fb923c", width=3)
+        line=dict(color="#fb923c", width=2)
     ))
 
     fig_sr.update_layout(
@@ -506,7 +483,7 @@ with s2:
         y=df["support_20"],
         mode="lines+markers",
         name="Support 20",
-        line=dict(color="#c4b5fd", width=3)
+        line=dict(color="#c4b5fd", width=2)
     ))
 
     fig_sr20.add_trace(go.Scatter(
@@ -514,7 +491,7 @@ with s2:
         y=df["resistance_20"],
         mode="lines+markers",
         name="Resistance 20",
-        line=dict(color="#fdba74", width=3)
+        line=dict(color="#fdba74", width=2)
     ))
 
     fig_sr20.update_layout(
@@ -555,7 +532,7 @@ fig3.add_trace(go.Scatter(
     y=df["ci"],
     mode="lines+markers",
     name="CI",
-    line=dict(color="cyan", width=4),
+    line=dict(color="cyan", width=2),
     marker=dict(size=5),
     hovertemplate="Time: %{x}<br>CI: %{y:.2f}<extra></extra>"
 ))
