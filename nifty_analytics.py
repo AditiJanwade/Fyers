@@ -510,6 +510,9 @@ def build_oi_feature_snapshot(redis_client):
         strikes = oi_data.get("strikes", [])
         expiry = oi_data.get("expiry")
 
+        top_ce_strike = int(max(ce_data, key=ce_data.get)) if ce_data else 0
+        top_pe_strike = int(max(pe_data, key=pe_data.get)) if pe_data else 0
+
         if not strikes:
             return None
 
@@ -650,7 +653,9 @@ def build_oi_feature_snapshot(redis_client):
             "oi_bias_20": round(oi_bias_20, 2),
             "pcr_20": round(pcr_20, 2),
             "nifty_price": nifty_price,
-            "nifty_fut_price": fut_price
+            "nifty_fut_price": fut_price,
+            "top_ce_strike": top_ce_strike,
+            "top_pe_strike": top_pe_strike,
         }
 
     except Exception as e:

@@ -364,209 +364,209 @@ def calculate_group_strength():
 # -------------------------------
 # Calculate Market Regime
 # -------------------------------
-def calculate_market_regime():
-    """
-    Computes regime scores and appends into market_metrics
-    """
+# def calculate_market_regime():
+#     """
+#     Computes regime scores and appends into market_metrics
+#     """
 
-    try:
-        # -------------------------------
-        # Load existing metrics
-        # -------------------------------
-        metrics_raw = redis_client.get("market_metrics")
-        if not metrics_raw:
-            return
+#     try:
+#         # -------------------------------
+#         # Load existing metrics
+#         # -------------------------------
+#         metrics_raw = redis_client.get("market_metrics")
+#         if not metrics_raw:
+#             return
         
-        metrics = json.loads(metrics_raw)
+#         metrics = json.loads(metrics_raw)
 
-        # -------------------------------
-        # Load NIFTY context
-        # -------------------------------
-        context = redis_client.hgetall("NIFTY_CONTEXT_VAR")
+#         # -------------------------------
+#         # Load NIFTY context
+#         # -------------------------------
+#         context = redis_client.hgetall("NIFTY_CONTEXT_VAR")
 
-        if context:
-            pos = float(context.get("pos", 0))
-            slope = float(context.get("slope", 0))
-            trend_up = int(context.get("trend_up", 0))
-            trend_down = int(context.get("trend_down", 0))
-            rec_ratio = float(context.get("rec_ratio", 0))
-            top_recently = int(context.get("top_recently", 0))
-        else:
-            pos = slope = rec_ratio = 0
-            trend_up = trend_down = top_recently = 0
+#         if context:
+#             pos = float(context.get("pos", 0))
+#             slope = float(context.get("slope", 0))
+#             trend_up = int(context.get("trend_up", 0))
+#             trend_down = int(context.get("trend_down", 0))
+#             rec_ratio = float(context.get("rec_ratio", 0))
+#             top_recently = int(context.get("top_recently", 0))
+#         else:
+#             pos = slope = rec_ratio = 0
+#             trend_up = trend_down = top_recently = 0
 
-        # -------------------------------
-        # Market breadth
-        # -------------------------------
-        p_struct = metrics.get("p_positional", 0)
-        p_intra_low = metrics.get("parti_intra_low", 0)
-        p_intra_high = metrics.get("parti_intra_high", 0)
+#         # -------------------------------
+#         # Market breadth
+#         # -------------------------------
+#         p_struct = metrics.get("p_positional", 0)
+#         p_intra_low = metrics.get("parti_intra_low", 0)
+#         p_intra_high = metrics.get("parti_intra_high", 0)
 
-        # -------------------------------
-        # 1) Downtrend
-        # -------------------------------
-        score_down = (
-            20 * (pos < 0.35) +
-            20 * (trend_down == 1) +
-            20 * (slope < 0) +
-            20 * (p_struct < 45) +
-            20 * (p_intra_high > 55)
-        )
+#         # -------------------------------
+#         # 1) Downtrend
+#         # -------------------------------
+#         score_down = (
+#             20 * (pos < 0.35) +
+#             20 * (trend_down == 1) +
+#             20 * (slope < 0) +
+#             20 * (p_struct < 45) +
+#             20 * (p_intra_high > 55)
+#         )
 
-        # -------------------------------
-        # 2) Recovery
-        # -------------------------------
-        score_recovery = (
-            20 * (rec_ratio > 0.60) +
-            20 * (pos > 0.50) +
-            20 * (slope > 0) +
-            20 * (p_intra_low > 55) +
-            20 * (p_struct > 50)
-        )
+#         # -------------------------------
+#         # 2) Recovery
+#         # -------------------------------
+#         score_recovery = (
+#             20 * (rec_ratio > 0.60) +
+#             20 * (pos > 0.50) +
+#             20 * (slope > 0) +
+#             20 * (p_intra_low > 55) +
+#             20 * (p_struct > 50)
+#         )
 
-        # -------------------------------
-        # 3) Uptrend
-        # -------------------------------
-        score_up = (
-            20 * (pos > 0.65) +
-            20 * (trend_up == 1) +
-            20 * (slope > 0) +
-            20 * (p_struct > 55) +
-            20 * (p_intra_low > 55)
-        )
+#         # -------------------------------
+#         # 3) Uptrend
+#         # -------------------------------
+#         score_up = (
+#             20 * (pos > 0.65) +
+#             20 * (trend_up == 1) +
+#             20 * (slope > 0) +
+#             20 * (p_struct > 55) +
+#             20 * (p_intra_low > 55)
+#         )
 
-        # -------------------------------
-        # 4) Breakdown
-        # -------------------------------
-        score_breakdown = (
-            20 * (top_recently == 1) +
-            20 * (pos < 0.55) +
-            20 * (slope < 0) +
-            20 * (p_intra_high > 55) +
-            20 * (p_struct < 50)
-        )
+#         # -------------------------------
+#         # 4) Breakdown
+#         # -------------------------------
+#         score_breakdown = (
+#             20 * (top_recently == 1) +
+#             20 * (pos < 0.55) +
+#             20 * (slope < 0) +
+#             20 * (p_intra_high > 55) +
+#             20 * (p_struct < 50)
+#         )
 
-        # -------------------------------
-        # 5) Chop
-        # -------------------------------
-        score_chop = (
-            20 * (0.35 < pos < 0.65) +
-            20 * (abs(slope) < 5) +
-            20 * (abs(metrics.get("momentum", 0)) < 5) +
-            20 * (45 < p_struct < 55) +
-            20 * (abs(metrics.get("t15_strength", 0)) < 1)
-        )
+#         # -------------------------------
+#         # 5) Chop
+#         # -------------------------------
+#         score_chop = (
+#             20 * (0.35 < pos < 0.65) +
+#             20 * (abs(slope) < 5) +
+#             20 * (abs(metrics.get("momentum", 0)) < 5) +
+#             20 * (45 < p_struct < 55) +
+#             20 * (abs(metrics.get("t15_strength", 0)) < 1)
+#         )
 
-        # -------------------------------
-        # Final Regime
-        # -------------------------------
-        regime_scores = {
-            "downtrend": score_down,
-            "recovery": score_recovery,
-            "uptrend": score_up,
-            "breakdown": score_breakdown,
-            "chop": score_chop
-        }
+#         # -------------------------------
+#         # Final Regime
+#         # -------------------------------
+#         regime_scores = {
+#             "downtrend": score_down,
+#             "recovery": score_recovery,
+#             "uptrend": score_up,
+#             "breakdown": score_breakdown,
+#             "chop": score_chop
+#         }
 
         
-        # -------------------------------
-        # Append into metrics (matrix)
-        # -------------------------------
-        metrics.update({
-            "score_down": score_down,
-            "score_recovery": score_recovery,
-            "score_up": score_up,
-            "score_breakdown": score_breakdown,
-            "score_chop": score_chop,
+#         # -------------------------------
+#         # Append into metrics (matrix)
+#         # -------------------------------
+#         metrics.update({
+#             "score_down": score_down,
+#             "score_recovery": score_recovery,
+#             "score_up": score_up,
+#             "score_breakdown": score_breakdown,
+#             "score_chop": score_chop,
             
-        })
+#         })
 
-        # ================================
-        # CI CALCULATION 
-        # ================================
+#         # ================================
+#         # CI CALCULATION 
+#         # ================================
 
-        M = metrics.get("normalize_momentum", 0)
+#         M = metrics.get("normalize_momentum", 0)
 
-        p_struct = metrics.get("p_positional", 0)
-        p_intra_low = metrics.get("parti_intra_low", 0)
-        p_intra_high = metrics.get("parti_intra_high", 0)
+#         p_struct = metrics.get("p_positional", 0)
+#         p_intra_low = metrics.get("parti_intra_low", 0)
+#         p_intra_high = metrics.get("parti_intra_high", 0)
 
-        a_struct = metrics.get("a_struct", 0)
-        a_intra_low = metrics.get("acc_low", 0)
-        a_intra_high = metrics.get("acc_high", 0)
+#         a_struct = metrics.get("a_struct", 0)
+#         a_intra_low = metrics.get("acc_low", 0)
+#         a_intra_high = metrics.get("acc_high", 0)
 
-        # -------------------------------
-        # CI PER REGIME
-        # -------------------------------
+#         # -------------------------------
+#         # CI PER REGIME
+#         # -------------------------------
 
-        ci_down = 0.5*M + 0.3*p_struct + 0.2*a_struct
+#         ci_down = 0.5*M + 0.3*p_struct + 0.2*a_struct
 
-        ci_recovery = 0.5*M + 0.3*p_intra_low + 0.2*a_intra_low
+#         ci_recovery = 0.5*M + 0.3*p_intra_low + 0.2*a_intra_low
 
-        ci_up = 0.5*M + 0.3*p_struct + 0.2*a_struct
+#         ci_up = 0.5*M + 0.3*p_struct + 0.2*a_struct
 
-        ci_breakdown = 0.5*M + 0.3*(100 - p_intra_high) + 0.2*(100 - a_intra_high)
+#         ci_breakdown = 0.5*M + 0.3*(100 - p_intra_high) + 0.2*(100 - a_intra_high)
 
-        # Chop special
-        p_chop = 0.5*p_struct + 0.5*p_intra_low
-        ci_chop = 0.5*M + 0.3*p_chop + 0.2*50
+#         # Chop special
+#         p_chop = 0.5*p_struct + 0.5*p_intra_low
+#         ci_chop = 0.5*M + 0.3*p_chop + 0.2*50
 
-        # -------------------------------
-        # WEIGHTS (PROBABILITIES)
-        # -------------------------------
+#         # -------------------------------
+#         # WEIGHTS (PROBABILITIES)
+#         # -------------------------------
 
-        total_score = score_down + score_recovery + score_up + score_breakdown + score_chop
+#         total_score = score_down + score_recovery + score_up + score_breakdown + score_chop
 
-        if total_score == 0:
-            w_down = w_rec = w_up = w_brk = w_chop = 0
-        else:
-            w_down = score_down / total_score
-            w_rec = score_recovery / total_score
-            w_up = score_up / total_score
-            w_brk = score_breakdown / total_score
-            w_chop = score_chop / total_score
+#         if total_score == 0:
+#             w_down = w_rec = w_up = w_brk = w_chop = 0
+#         else:
+#             w_down = score_down / total_score
+#             w_rec = score_recovery / total_score
+#             w_up = score_up / total_score
+#             w_brk = score_breakdown / total_score
+#             w_chop = score_chop / total_score
 
-        # -------------------------------
-        # FINAL CI (WEIGHTED 🔥)
-        # -------------------------------
+#         # -------------------------------
+#         # FINAL CI (WEIGHTED 🔥)
+#         # -------------------------------
 
-        ci_final = (
-            w_down * ci_down +
-            w_rec * ci_recovery +
-            w_up * ci_up +
-            w_brk * ci_breakdown +
-            w_chop * ci_chop
-        )
+#         ci_final = (
+#             w_down * ci_down +
+#             w_rec * ci_recovery +
+#             w_up * ci_up +
+#             w_brk * ci_breakdown +
+#             w_chop * ci_chop
+#         )
 
-        # -------------------------------
-        # ADD TO METRICS (MATRIX)
-        # -------------------------------
+#         # -------------------------------
+#         # ADD TO METRICS (MATRIX)
+#         # -------------------------------
 
-        metrics.update({
-            "ci_down": round(ci_down, 2),
-            "ci_recovery": round(ci_recovery, 2),
-            "ci_up": round(ci_up, 2),
-            "ci_breakdown": round(ci_breakdown, 2),
-            "ci_chop": round(ci_chop, 2),
+#         metrics.update({
+#             "ci_down": round(ci_down, 2),
+#             "ci_recovery": round(ci_recovery, 2),
+#             "ci_up": round(ci_up, 2),
+#             "ci_breakdown": round(ci_breakdown, 2),
+#             "ci_chop": round(ci_chop, 2),
 
-            "w_down": round(w_down, 3),
-            "w_recovery": round(w_rec, 3), 
-            "w_up": round(w_up, 3),
-            "w_breakdown": round(w_brk, 3),
-            "w_chop": round(w_chop, 3),
+#             "w_down": round(w_down, 3),
+#             "w_recovery": round(w_rec, 3), 
+#             "w_up": round(w_up, 3),
+#             "w_breakdown": round(w_brk, 3),
+#             "w_chop": round(w_chop, 3),
 
-            "ci_final": round(ci_final, 2)
-        })
+#             "ci_final": round(ci_final, 2)
+#         })
 
-        # -------------------------------
-        # Save back
-        # -------------------------------
-        redis_client.set("market_metrics", json.dumps(metrics))
+#         # -------------------------------
+#         # Save back
+#         # -------------------------------
+#         redis_client.set("market_metrics", json.dumps(metrics))
 
-        print("Regime:", regime_scores)
+#         print("Regime:", regime_scores)
 
-    except Exception as e:
-        print("Regime Error:", e)
+    # except Exception as e:
+    #     print("Regime Error:", e)
 
 def store_market_history():
     try:
@@ -869,8 +869,8 @@ def fetch_and_store_data(force=False):
     # Calculate group strength
     calculate_group_strength()
 
-    # Calculate market regime
-    calculate_market_regime()
+    # # Calculate market regime
+    # calculate_market_regime()
 
     # Store market history
     store_market_history()

@@ -153,7 +153,32 @@ for t, v in data.items():
     rows.append(row)
 
 df = pd.DataFrame(rows).sort_values("time")
+# ✅ HANDLE MISSING DATA (VERY IMPORTANT)
+required_cols = [
+    "trending_ce",
+    "trending_pe",
+    "nifty_price",
+    "nifty_fut_price",
+    "oi_bias",
+    "oi_bias_20",
+    "pcr",
+    "pcr_20",
+    "support_sum",
+    "resistance_sum",
+    "support_20",
+    "resistance_20",
+    "ci"
+]
+
+for col in required_cols:
+    if col not in df.columns:
+        df[col] = 0
+
+    df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
+# refresh latest after cleaning
 latest = df.iloc[-1]
+
 
 # -----------------------------------
 # PLOTLY CONFIG
@@ -185,11 +210,11 @@ left, right = st.columns([1.3,2.1])
 # -----------------------------------
 def color_metric(label, value, color):
     html = f"""
-    <div style="margin-bottom:10px; padding:8px; background:#111827; border:1px solid #374151; border-radius:10px;">
-        <div style="font-size:12px; font-weight:700; color:{color}; margin-bottom:4px;">
+    <div style="margin-bottom:8px; padding:6px; background:#111827; border:1px solid #374151; border-radius:10px;">
+        <div style="font-size:10px; font-weight:700; color:{color}; margin-bottom:4px;">
             {label}
         </div>
-        <div style="font-size:22px; font-weight:800; color:{color};">
+        <div style="font-size:15px; font-weight:800; color:{color};">
             {value}
         </div>
     </div>
@@ -207,7 +232,7 @@ with left:
     st.subheader("📌 Live Data")
 
     # TOP LINE - ALL DATA IN ONE ROW
-    c1,c2,c3,c4,c5,c6,c7 = st.columns(7)
+    c1,c2,c3= st.columns(3)
 
     with c1:
         color_metric("NIFTY", round(latest["nifty_price"],2), "#00F5FF")   # cyan
@@ -217,7 +242,8 @@ with left:
 
     with c3:
         color_metric("CI", round(latest["ci"],2), "#38BDF8")   # sky blue
-
+        
+    c4,c5,c6,c7 = st.columns(4)
     with c4:
         color_metric("OI Bias", round(latest["oi_bias"],2), "#A78BFA")   # violet
 
@@ -244,13 +270,42 @@ with left:
 
     with s4:
         color_metric("Resistance20", round(latest["resistance_20"],2), "#FDBA74")
+
+    
+    t1,t2 = st.columns(2)
+    with t1:
+        color_metric("Trending CE", round(latest["top_ce_strike"],2), "#FDBA74")
+    with t2:
+        color_metric("Trending PE", round(float(latest.get("top_pe_strike", 0)), 2), "#22c55e")
+
     
 # -----------------------------------
 # RIGHT NIFTY CHART
 # -----------------------------------
 with right:
-
+    # ensure no crash in chart
+   
     fig_price = go.Figure()
+
+    # 🔴 Trending CE (Resistance Line)
+    fig_price.add_trace(go.Scatter(
+        x=df["time"],
+        y=df["trending_ce"],
+        mode="lines",
+        name="Trending CE",
+        line=dict(color="#ef4444", width=2, dash="dash"),
+        opacity=0.7
+    ))
+
+    # 🟢 Trending PE (Support Line)
+    fig_price.add_trace(go.Scatter(
+        x=df["time"],
+        y=df["trending_pe"],
+        mode="lines",
+        name="Trending PE",
+        line=dict(color="#22c55e", width=2, dash="dash"),
+        opacity=0.7
+    ))
 
     # NIFTY
     fig_price.add_trace(go.Scatter(
@@ -258,7 +313,7 @@ with right:
         y=df["nifty_price"],
         mode="lines",
         name="NIFTY",
-        line=dict(color="cyan", width=4)
+        line=dict(color="cyan", width=2)
     ))
 
     # FUTURE (only valid rows)
@@ -299,11 +354,14 @@ with right:
 
     st.plotly_chart(fig_price, use_container_width=True, config=plot_config)
 # ==================================================
+    
+
 # BOTTOM SECTION
 # LEFT = OI BIAS
 # RIGHT = PCR
 # ==================================================
 b1, b2 = st.columns(2)
+
 
 # -----------------------------------
 # OI BIAS CHART
@@ -341,6 +399,10 @@ with b1:
     )
 
     st.plotly_chart(fig, use_container_width=True, config=plot_config)
+
+
+    
+
 
 # -----------------------------------
 # PCR CHART
