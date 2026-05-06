@@ -142,12 +142,16 @@ def save_today_to_mongo():
 # FYERS
 # -------------------------------
 def get_fyers():
+    from dotenv import load_dotenv
+    import os
+
+    load_dotenv(override=True)
+
     return fyersModel.FyersModel(
-        client_id=CLIENT_ID,
-        token=ACCESS_TOKEN,
+        client_id=os.getenv("CLIENT_ID"),
+        token=os.getenv("ACCESS_TOKEN"),
         log_path=""
     )
-
 # -------------------------------
 # LOGIN
 # -------------------------------
@@ -159,6 +163,8 @@ def login():
     if result.returncode != 0:
         print("Login failed ❌")
         exit()
+
+    load_dotenv(override=True)
 
     print("Login successful ✅")
 
