@@ -217,7 +217,7 @@ def run_cycle():
 
         # ✅ THEN: OI (lock will use day_open)
         run_nifty_oi_once(redis_client, fyers)
-        fetch_and_store_data()
+        # fetch_and_store_data()
         store_oi_feature_snapshot(redis_client) 
 
         print("Cycle completed ✅")
@@ -236,7 +236,7 @@ def run_final():
         fyers = get_fyers()
         run_nifty_oi_once(redis_client, fyers)
         run_nifty_once(redis_client, fyers)
-        fetch_and_store_data()
+        # fetch_and_store_data()
         save_today_to_mongo()
 
         print("Final cycle completed ✅")

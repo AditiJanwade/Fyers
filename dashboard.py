@@ -188,10 +188,10 @@ left, right = st.columns([1.1,2.1])
 def color_metric(label, value, color):
     html = f"""
     <div style="margin-bottom:8px; padding:6px; background:#111827; border:1px solid #374151; border-radius:10px;">
-        <div style="font-size:10px; font-weight:700; color:{color}; margin-bottom:4px;">
+        <div style="font-size:20px; font-weight:700; color:{color}; margin-bottom:4px;">
             {label}
         </div>
-        <div style="font-size:15px; font-weight:800; color:{color};">
+        <div style="font-size:20px; font-weight:800; color:{color};">
             {value}
         </div>
     </div>
