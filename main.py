@@ -8,7 +8,7 @@ import json
 from dotenv import load_dotenv
 from fyers_apiv3 import fyersModel
 from nifty_analytics import run_nifty_oi_once
-from fetch_nifty_redis import fetch_and_store_data
+# from fetch_nifty_redis import fetch_and_store_data
 from nifty_analytics import run_nifty_once, initialize_nifty_analytics,store_oi_feature_snapshot
 from pymongo import MongoClient
 

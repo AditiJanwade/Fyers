@@ -103,9 +103,7 @@ r = redis.Redis(
 # -----------------------------------
 # LOAD DATA
 # -----------------------------------
-# -----------------------------------
-# LOAD DATA + DATE FILTER
-# -----------------------------------
+
 all_dates = r.hkeys("OI_FEATURE_LIVE")
 
 if not all_dates:
@@ -156,7 +154,6 @@ df = pd.DataFrame(rows).sort_values("time")
 
 latest = df.iloc[-1]
 
-
 # -----------------------------------
 # PLOTLY CONFIG
 # -----------------------------------
@@ -165,8 +162,6 @@ plot_config = {
     "displayModeBar": True,
     "displaylogo": False
 }
-
-
 # ==================================================
 # TOP SECTION
 # LEFT = DATA
@@ -177,14 +172,7 @@ left, right = st.columns([1.1,2.1])
 # -----------------------------------
 # LEFT KPI DATA
 # -----------------------------------
-# -----------------------------------
-# LEFT KPI DATA
-# Replace your current "with left:" block with this
-# -----------------------------------
-# -----------------------------------
-# LIVE DATA COLORS
-# Add this helper function ABOVE: with left:
-# -----------------------------------
+
 def color_metric(label, value, color):
     html = f"""
     <div style="margin-bottom:8px; padding:6px; background:#111827; border:1px solid #374151; border-radius:10px;">
@@ -197,9 +185,7 @@ def color_metric(label, value, color):
     </div>
     """
     st.markdown(html, unsafe_allow_html=True)
-
-
-    
+ 
 with left:
     
     if selected_date == today:
@@ -218,7 +204,7 @@ with left:
         color_metric("FUTURE", round(latest["nifty_fut_price"],2), "#F59E0B")   # orange
 
     with c3:
-        color_metric("CI", round(latest["ci"],2), "#38BDF8")   # sky blue
+        color_metric("Difference", round(latest["diff"],2), "#38BDF8")   # sky blue
         
     c4,c5,c6,c7 = st.columns(4)
     with c4:
@@ -249,21 +235,26 @@ with left:
         color_metric("Resistance20", round(latest["resistance_20"],2), "#FDBA74")
 
     
-    t1,t2 = st.columns(2)
+    t1,t2,t3,t4 = st.columns(4)
     with t1:
-        color_metric("Trending CE", round(latest["top_ce_strike"],2), "#FDBA74")
+        color_metric("Trending CE", round(latest.get("top_ce_strike", 0),2), "#FDBA74")
     with t2:
-        color_metric("Trending PE", round(float(latest.get("top_pe_strike", 0)), 2), "#22c55e")
+        color_metric("Trending PE", round(latest.get("top_pe_strike", 0),2), "#22c55e")
+   
+    with t3:
+        color_metric("CE_IV", round(latest.get("CE_IV", 0),2), "#FDBA74")
 
-    
+    with t4:
+        color_metric("PE_IV", round(latest.get("PE_IV", 0),2), "#FDBA74")
+           
 # -----------------------------------
 # RIGHT NIFTY CHART
 # -----------------------------------
 with right:
-    # ensure no crash in chart
+    # ensure no crash in chart  
    
     fig_price = go.Figure()
-
+     
     # 🔴 Trending CE (Resistance Line)
     fig_price.add_trace(go.Scatter(
         x=df["time"],
@@ -283,6 +274,23 @@ with right:
         line=dict(color="#22c55e", width=2, dash="dash"),
         opacity=0.7
     ))
+    fig_price.add_trace(go.Scatter(
+    x=df["time"],
+    y=df["top_ce_strike_2"] if "top_ce_strike_2" in df.columns else [0]*len(df),
+    mode="lines",
+    name="Trending CE 2",
+    line=dict(color="#ef4444", width=2, dash="dash"),
+    opacity=0.4
+))
+
+    fig_price.add_trace(go.Scatter(
+    x=df["time"],
+    y=df["top_pe_strike_2"] if "top_pe_strike_2" in df.columns else [0]*len(df),
+    mode="lines",
+    name="Trending PE 2",
+    line=dict(color="#22c55e", width=2, dash="dash"),
+    opacity=0.4
+))
 
     # NIFTY
     fig_price.add_trace(go.Scatter(
@@ -331,8 +339,6 @@ with right:
 
     st.plotly_chart(fig_price, use_container_width=True, config=plot_config)
 # ==================================================
-    
-
 # BOTTOM SECTION
 # LEFT = OI BIAS
 # RIGHT = PCR
@@ -376,10 +382,6 @@ with b1:
     )
 
     st.plotly_chart(fig, use_container_width=True, config=plot_config)
-
-
-    
-
 
 # -----------------------------------
 # PCR CHART
@@ -520,46 +522,83 @@ with s2:
 )
 
     st.plotly_chart(fig_sr20, use_container_width=True, config=plot_config)
-# -----------------------------------
-# CI GRAPH
-# -----------------------------------
 
+# -----------------------------------
+# IV GRAPH
+# -----------------------------------
 
 fig3 = go.Figure()
 
+    # ATM CE IV
 fig3.add_trace(go.Scatter(
-    x=df["time"],
-    y=df["ci"],
-    mode="lines+markers",
-    name="CI",
-    line=dict(color="cyan", width=2),
-    marker=dict(size=5),
-    hovertemplate="Time: %{x}<br>CI: %{y:.2f}<extra></extra>"
-))
+        x=df["time"],
+        y=df["CE_IV"],
+        mode="lines+markers",
+        name="ATM CE IV",
+        line=dict(color="#22c55e", width=2)
+    ))
+
+    # ATM PE IV
+fig3.add_trace(go.Scatter(
+        x=df["time"],
+        y=df["PE_IV"],
+        mode="lines+markers",
+        name="ATM PE IV",
+        line=dict(color="#ef4444", width=2)
+    ))
+
+    # Futures Premium
+fig3.add_trace(go.Scatter(
+        x=df["time"],
+        y=df["diff"],
+        mode="lines+markers",
+        name="Fut Premium",
+        line=dict(color="#38bdf8", width=2),
+        yaxis="y2"
+    ))
 
 fig3.update_layout(
-     title={
-        "text": "⚡ CI Final Graph",
-        "font": {"color": "#38bdf8", "size": 22}   # sky blue
-    },
-    template="plotly_dark",
-    height=420,
-    margin=dict(l=10, r=10, t=70, b=10),
-    hovermode="x unified",
 
-    xaxis=dict(
-        title="Time",
-        tickangle=-35,
-        rangeslider=dict(visible=True)
-    ),
+        title={
+            "text": "⚡ ATM IV & Futures Premium",
+            "font": {"color": "#facc15", "size": 22}
+        },
 
-    yaxis=dict(
-        title="CI",
-        showgrid=True
+        template="plotly_dark",
+        height=430,
+
+        yaxis=dict(
+            title="IV",
+            side="left"
+        ),
+
+        yaxis2=dict(
+            title="Premium",
+            overlaying="y",
+            side="right"
+        ),
+
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        ),
+
+        margin=dict(
+            l=10,
+            r=10,
+            t=70,
+            b=10
+        )
     )
-)
 
-st.plotly_chart(fig3, use_container_width=True, config=plot_config)
+st.plotly_chart(
+        fig3,
+        use_container_width=True,
+        config=plot_config
+    )
 
 # -----------------------------------
 # RAW DATA

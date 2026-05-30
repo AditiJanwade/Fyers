@@ -510,25 +510,51 @@ def build_oi_feature_snapshot(redis_client):
         strikes = oi_data.get("strikes", [])
         expiry = oi_data.get("expiry")
 
-        top_ce_strike = int(max(ce_data, key=ce_data.get)) if ce_data else 0
-        top_pe_strike = int(max(pe_data, key=pe_data.get)) if pe_data else 0
+        # TOP 2 CE STRIKES
+        sorted_ce = sorted(
+            ce_data.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )
+
+        top_ce_strike = int(sorted_ce[0][0]) if len(sorted_ce) > 0 else 0
+        top_ce_strike_2 = int(sorted_ce[1][0]) if len(sorted_ce) > 1 else 0
+        
+        # TOP 2 PE STRIKES
+        sorted_pe = sorted(
+            pe_data.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )
+
+        top_pe_strike = int(sorted_pe[0][0]) if len(sorted_pe) > 0 else 0
+        top_pe_strike_2 = int(sorted_pe[1][0]) if len(sorted_pe) > 1 else 0
+
+        # top_ce_strike = int(max(ce_data, key=ce_data.get)) if ce_data else 0
+        # top_pe_strike = int(max(pe_data, key=pe_data.get)) if pe_data else 0
 
         if not strikes:
             return None
-
-        
         day_vars = redis_client.hgetall("NIFTY_DAY_VAR")
         # -------------------------
         # SUPPORT / RESISTANCE (Directional)
         # -------------------------
-        # nifty_price = float(day_vars.get("close", 0))
         nifty_price = float(day_vars.get("close", 0))
 
         atm_index = min(
             range(len(strikes)),
             key=lambda i: abs(strikes[i] - nifty_price)
         )
+        atm_strike = strikes[atm_index]
 
+        atm_ce_iv = 0
+        atm_pe_iv = 0
+        ce_iv = oi_data.get("CE_IV", {})
+        pe_iv = oi_data.get("PE_IV", {})
+
+        atm_ce_iv = ce_iv.get(str(atm_strike), 0)
+        atm_pe_iv = pe_iv.get(str(atm_strike), 0)
+        
          # CE → Resistance side (ATM to ATM + 3)
         ce_strikes = strikes[atm_index : min(len(strikes), atm_index + 4)]
 
@@ -541,17 +567,7 @@ def build_oi_feature_snapshot(redis_client):
 
         total_pe = sum(pe_data.values())
         total_ce = sum(ce_data.values())
-        # # CE → Resistance side (ATM + 1, +2)
-        # ce_strikes = strikes[atm_index : min(len(strikes), atm_index + 3)]
-
-        # # PE → Support side (ATM, -1, -2)
-        # pe_strikes = strikes[max(0, atm_index - 2) : atm_index + 1]
-
-        # near_pe = sum(pe_data.get(s, 0) for s in pe_strikes)
-        # near_ce = sum(ce_data.get(s, 0) for s in ce_strikes)
-
-        # support = (near_pe / total_pe * 100) if total_pe else 0
-        # resistance = (near_ce / total_ce * 100) if total_ce else 0
+ 
 
         # -------------------------
         # PCR & OI BIAS
@@ -592,10 +608,119 @@ def build_oi_feature_snapshot(redis_client):
         nifty_price = float(day_vars.get("close", 0))
 
         # -------------------------
+        # PREVIOUS OI SNAPSHOT
+        # -------------------------
+
+        prev_raw = redis_client.get("PREV_OI_DATA")
+        if not prev_raw:
+
+            redis_client.set(
+                "PREV_OI_DATA",
+                json.dumps({
+                    "CE": ce_data,
+                    "PE": pe_data
+                })
+            )
+
+            return None
+
+        prev_ce = {}
+        prev_pe = {}
+
+        if prev_raw:
+
+            prev_data = json.loads(prev_raw)
+
+            prev_ce = {
+                int(k): v
+                for k, v in prev_data.get("CE", {}).items()
+            }
+
+            prev_pe = {
+                int(k): v
+                for k, v in prev_data.get("PE", {}).items()
+            }
+
+        # -------------------------
+        # CE DIFFERENCE
+        # -------------------------
+        ce_diff = {}
+
+        for strike, curr_oi in ce_data.items():
+
+            prev_oi = prev_ce.get(strike, 0)
+
+            ce_diff[strike] = curr_oi - prev_oi
+
+        # -------------------------
+        # PE DIFFERENCE
+        # -------------------------
+        pe_diff = {}
+
+        for strike, curr_oi in pe_data.items():
+
+            prev_oi = prev_pe.get(strike, 0)
+
+            pe_diff[strike] = curr_oi - prev_oi
+
+        # -------------------------
+        # LARGEST ABSOLUTE CE CHANGE
+        # -------------------------
+        largest_ce_strike = 0
+        largest_ce_diff = 0
+
+        if ce_diff:
+
+            largest_ce_strike = max(
+                ce_diff,
+                key=lambda k: abs(ce_diff[k])
+            )
+
+            largest_ce_diff = ce_diff[largest_ce_strike]
+
+        # -------------------------
+        # LARGEST ABSOLUTE PE CHANGE
+        # -------------------------
+        largest_pe_strike = 0
+        largest_pe_diff = 0
+
+        if pe_diff:
+
+            largest_pe_strike = max(
+                pe_diff,
+                key=lambda k: abs(pe_diff[k])
+            )
+
+            largest_pe_diff = pe_diff[largest_pe_strike]
+
+        # -------------------------
+        # TYPE
+        # -------------------------
+        largest_ce_type = (
+            "BUILDUP"
+            if largest_ce_diff > 0
+            else "UNWINDING"
+        )
+
+        largest_pe_type = (
+            "BUILDUP"
+            if largest_pe_diff > 0
+            else "UNWINDING"
+        )
+
+        # -------------------------
+        # SAVE CURRENT AS PREVIOUS
+        # -------------------------
+        redis_client.set(
+            "PREV_OI_DATA",
+            json.dumps({
+                "CE": ce_data,
+                "PE": pe_data
+            })
+        )
+
+        # -------------------------
         # NIFTY FUTURE PRICE
-        # -------------------------
-        # -------------------------
-        # NIFTY FUTURE PRICE (AUTO ACTIVE CONTRACT)
         # -------------------------
         fut_price = 0
 
@@ -637,13 +762,15 @@ def build_oi_feature_snapshot(redis_client):
                         print("ACTIVE FUT FOUND:", fut_symbol, fut_price)
                         break
 
+            diff = fut_price - nifty_price       
+
         except Exception as e:
             print("FUT Error:", e)
         # -------------------------
         # FINAL FEATURE OBJECT
         # -------------------------
         return {
-            "ci": round(ci, 2),
+            "diff":diff,
             "support_sum": round(support_sum, 2),
             "resistance_sum": round(resistance_sum, 2),
             "oi_bias": round(oi_bias, 2),
@@ -656,6 +783,18 @@ def build_oi_feature_snapshot(redis_client):
             "nifty_fut_price": fut_price,
             "top_ce_strike": top_ce_strike,
             "top_pe_strike": top_pe_strike,
+
+            "CE_IV":atm_ce_iv,
+            "PE_IV":atm_pe_iv,
+
+            "top_ce_strike_2": top_ce_strike_2,
+            "top_pe_strike_2": top_pe_strike_2,
+
+            "largest_ce_strike": largest_ce_strike,
+            "largest_ce_diff": largest_ce_diff,
+            
+            "largest_pe_strike": largest_pe_strike,
+            "largest_pe_diff": largest_pe_diff,
         }
 
     except Exception as e:
@@ -717,7 +856,8 @@ def run_nifty_oi_once(redis_client, fyers):
     data = {
         "symbol": "NSE:NIFTY50-INDEX",
         "strikecount": 50,
-        "timestamp": ""
+        "timestamp": "",
+        "greeks": 1 
     }
 
     try:
@@ -745,8 +885,6 @@ def run_nifty_oi_once(redis_client, fyers):
             item["ltp"] for item in options if item["strike_price"] == -1
         )
 
-       
-
         # 🔒 LOCK STRIKES
         lock = get_or_create_lock(redis_client, options, nifty_ltp)
         selected_strikes = lock["strikes"]
@@ -756,6 +894,9 @@ def run_nifty_oi_once(redis_client, fyers):
         # -----------------------------
         ce_data = {}
         pe_data = {}
+        ce_iv = {}
+        pe_iv = {}
+
 
         for item in options:
             strike = item["strike_price"]
@@ -764,14 +905,18 @@ def run_nifty_oi_once(redis_client, fyers):
 
                 if item["option_type"] == "CE":
                     ce_data[strike] = item["oi"]
+                    ce_iv[strike] = item.get("greeks", {}).get("iv", 0)
 
                 elif item["option_type"] == "PE":
                     pe_data[strike] = item["oi"]
+                    pe_iv[strike] = item.get("greeks", {}).get("iv", 0)
 
         ratio_data = calculate_oi_ratio(options, selected_strikes)
+
         # -----------------------------
         # 4. STORE IN REDIS
         # -----------------------------
+        
         final_data = {
             "expiry": latest_expiry,
             "ltp": nifty_ltp,
@@ -779,6 +924,8 @@ def run_nifty_oi_once(redis_client, fyers):
             "strikes": selected_strikes,
             "CE": ce_data,
             "PE": pe_data,
+            "CE_IV": ce_iv,
+            "PE_IV": pe_iv,
             "analysis": ratio_data, 
             "timestamp": datetime.datetime.now().strftime("%H:%M:%S")
         }
