@@ -5,6 +5,7 @@ import datetime
 import redis
 from dotenv import load_dotenv
 from fyers_apiv3 import fyersModel
+import math
 
 # -------------------------------
 # Load environment variables
@@ -549,11 +550,37 @@ def build_oi_feature_snapshot(redis_client):
 
         atm_ce_iv = 0
         atm_pe_iv = 0
+        atm_ce_ltp = 0
+        atm_pe_ltp = 0
+        atm_straddle = 0
+
         ce_iv = oi_data.get("CE_IV", {})
         pe_iv = oi_data.get("PE_IV", {})
 
+        ce_ltp = oi_data.get("CE_LTP", {})
+        pe_ltp = oi_data.get("PE_LTP", {})
+
+        atm_ce_ltp = ce_ltp.get(str(atm_strike), 0)
+        atm_pe_ltp = pe_ltp.get(str(atm_strike), 0)
+
+        atm_straddle = atm_ce_ltp + atm_pe_ltp
+
         atm_ce_iv = ce_iv.get(str(atm_strike), 0)
         atm_pe_iv = pe_iv.get(str(atm_strike), 0)
+
+        # Expiry date from OI data
+        expiry_date = datetime.datetime.strptime(expiry, "%d-%m-%Y").date()
+
+        days_to_expiry = max(
+            1,
+            (expiry_date - datetime.date.today()).days
+        )
+
+        Exp_Expiry = atm_straddle / 1.25
+
+        Exp_Intra = atm_straddle * math.sqrt(
+            1 / days_to_expiry
+        )
         
          # CE → Resistance side (ATM to ATM + 3)
         ce_strikes = strikes[atm_index : min(len(strikes), atm_index + 4)]
@@ -766,6 +793,7 @@ def build_oi_feature_snapshot(redis_client):
 
         except Exception as e:
             print("FUT Error:", e)
+
         # -------------------------
         # FINAL FEATURE OBJECT
         # -------------------------
@@ -786,6 +814,9 @@ def build_oi_feature_snapshot(redis_client):
 
             "CE_IV":atm_ce_iv,
             "PE_IV":atm_pe_iv,
+            "ATM_STRADDLE": round(atm_straddle, 2),
+            "EXP_MOVE_EXPIRY": round(Exp_Expiry, 2),
+            "EXP_MOVE_INTRADAY": round(Exp_Intra, 2),
 
             "top_ce_strike_2": top_ce_strike_2,
             "top_pe_strike_2": top_pe_strike_2,
@@ -896,8 +927,9 @@ def run_nifty_oi_once(redis_client, fyers):
         pe_data = {}
         ce_iv = {}
         pe_iv = {}
-
-
+        ce_ltp = {}
+        pe_ltp = {}
+        
         for item in options:
             strike = item["strike_price"]
 
@@ -906,10 +938,12 @@ def run_nifty_oi_once(redis_client, fyers):
                 if item["option_type"] == "CE":
                     ce_data[strike] = item["oi"]
                     ce_iv[strike] = item.get("greeks", {}).get("iv", 0)
+                    ce_ltp[strike] = item.get("ltp", 0)
 
                 elif item["option_type"] == "PE":
                     pe_data[strike] = item["oi"]
                     pe_iv[strike] = item.get("greeks", {}).get("iv", 0)
+                    pe_ltp[strike] = item.get("ltp", 0)
 
         ratio_data = calculate_oi_ratio(options, selected_strikes)
 
@@ -926,6 +960,8 @@ def run_nifty_oi_once(redis_client, fyers):
             "PE": pe_data,
             "CE_IV": ce_iv,
             "PE_IV": pe_iv,
+            "CE_LTP": ce_ltp,
+            "PE_LTP": pe_ltp,
             "analysis": ratio_data, 
             "timestamp": datetime.datetime.now().strftime("%H:%M:%S")
         }

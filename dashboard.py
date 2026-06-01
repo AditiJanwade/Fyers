@@ -195,7 +195,7 @@ with left:
     st.subheader("📌 Live Data")
 
     # TOP LINE - ALL DATA IN ONE ROW
-    c1,c2,c3= st.columns(3)
+    c1,c2,c3,c4= st.columns(4)
 
     with c1:
         color_metric("NIFTY", round(latest["nifty_price"],2), "#00F5FF")   # cyan
@@ -204,7 +204,9 @@ with left:
         color_metric("FUTURE", round(latest["nifty_fut_price"],2), "#F59E0B")   # orange
 
     with c3:
-        color_metric("Difference", round(latest["diff"],2), "#38BDF8")   # sky blue
+        color_metric("PREMIUM", round(latest["diff"],2), "#38BDF8")
+    with c4:
+        color_metric("ATM_straddle", round(latest["ATM_STRADDLE"],2), "#38BDF8")       # sky blue
         
     c4,c5,c6,c7 = st.columns(4)
     with c4:
@@ -235,17 +237,17 @@ with left:
         color_metric("Resistance20", round(latest["resistance_20"],2), "#FDBA74")
 
     
-    t1,t2,t3,t4 = st.columns(4)
+    t1,t2,t3,t4,t5= st.columns(5)
     with t1:
         color_metric("Trending CE", round(latest.get("top_ce_strike", 0),2), "#FDBA74")
     with t2:
         color_metric("Trending PE", round(latest.get("top_pe_strike", 0),2), "#22c55e")
-   
     with t3:
-        color_metric("CE_IV", round(latest.get("CE_IV", 0),2), "#FDBA74")
-
+        color_metric("ATM_IV", round(latest.get("CE_IV", 0),2), "#FDBA74")
     with t4:
-        color_metric("PE_IV", round(latest.get("PE_IV", 0),2), "#FDBA74")
+        color_metric("EXP_exp", round(latest.get("EXP_MOVE_EXPIRY", 0),2), "#74BFFD")
+    with t5:
+        color_metric("EXP_intra", round(latest.get("EXP_MOVE_INTRADAY", 0),2), "#74C2FD")    
            
 # -----------------------------------
 # RIGHT NIFTY CHART
@@ -526,82 +528,116 @@ with s2:
 # -----------------------------------
 # IV GRAPH
 # -----------------------------------
+iv_col, premium_col = st.columns(2)
 
-fig3 = go.Figure()
+with iv_col:
 
-    # ATM CE IV
-fig3.add_trace(go.Scatter(
+    fig_iv = go.Figure()
+
+    fig_iv.add_trace(go.Scatter(
         x=df["time"],
         y=df["CE_IV"],
         mode="lines+markers",
-        name="ATM CE IV",
+        name="ATM IV",
         line=dict(color="#22c55e", width=2)
     ))
 
-    # ATM PE IV
-fig3.add_trace(go.Scatter(
-        x=df["time"],
-        y=df["PE_IV"],
-        mode="lines+markers",
-        name="ATM PE IV",
-        line=dict(color="#ef4444", width=2)
-    ))
-
-    # Futures Premium
-fig3.add_trace(go.Scatter(
-        x=df["time"],
-        y=df["diff"],
-        mode="lines+markers",
-        name="Fut Premium",
-        line=dict(color="#38bdf8", width=2),
-        yaxis="y2"
-    ))
-
-fig3.update_layout(
-
+    fig_iv.update_layout(
         title={
-            "text": "⚡ ATM IV & Futures Premium",
-            "font": {"color": "#facc15", "size": 22}
+            "text":"📊 ATM IV Trend",
+            "font":{"color":"#22c55e","size":22}
         },
-
         template="plotly_dark",
         height=430,
-
-        yaxis=dict(
-            title="IV",
-            side="left"
-        ),
-
-        yaxis2=dict(
-            title="Premium",
-            overlaying="y",
-            side="right"
-        ),
-
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1
-        ),
-
-        margin=dict(
-            l=10,
-            r=10,
-            t=70,
-            b=10
-        )
+        margin=dict(l=10,r=10,t=70,b=10),
+        hovermode="x unified"
     )
 
-st.plotly_chart(
-        fig3,
+    st.plotly_chart(
+        fig_iv,
         use_container_width=True,
         config=plot_config
     )
 
+with premium_col:
+
+    fig_premium = go.Figure()
+
+    fig_premium.add_trace(go.Scatter(
+        x=df["time"],
+        y=df["diff"],
+        mode="lines+markers",
+        name="Futures Premium",
+        line=dict(color="#38bdf8", width=2)
+    ))
+
+    fig_premium.add_hline(
+        y=0,
+        line_dash="dash",
+        line_color="white"
+    )
+
+    fig_premium.update_layout(
+        title={
+            "text":"⚡ Futures Premium",
+            "font":{"color":"#38bdf8","size":22}
+        },
+        template="plotly_dark",
+        height=430,
+        margin=dict(l=10,r=10,t=70,b=10)
+    )
+
+    st.plotly_chart(
+        fig_premium,
+        use_container_width=True,
+        config=plot_config
+    )    
+
 # -----------------------------------
+# ATM STRADDLE GRAPH
+# -----------------------------------
+
+st.markdown("---")
+
+fig_straddle = go.Figure()
+
+fig_straddle.add_trace(go.Scatter(
+    x=df["time"],
+    y=df["ATM_STRADDLE"],
+    mode="lines+markers",
+    name="ATM Straddle",
+    line=dict(color="#facc15", width=3),
+    marker=dict(size=8),
+
+    hovertemplate=
+    "<b>Time:</b> %{x}<br>"
+    "<b>ATM Straddle:</b> %{y:.2f}"
+    "<extra></extra>"
+))
+
+fig_straddle.update_layout(
+    title={
+        "text":"🎯 ATM Straddle Trend",
+        "font":{"color":"#facc15","size":24}
+    },
+    template="plotly_dark",
+    height=430,
+    margin=dict(l=10,r=10,t=70,b=10),
+
+    hovermode="x unified",
+
+    hoverlabel=dict(
+        font=dict(size=22)
+    )
+)
+
+st.plotly_chart(
+    fig_straddle,
+    use_container_width=True,
+    config=plot_config
+)
+
 # RAW DATA
 # -----------------------------------
-st.subheader("📋 Raw Data")
-st.dataframe(df, use_container_width=True)
+# st.subheader("📋 Raw Data")
+# st.dataframe(df, use_container_width=True)
