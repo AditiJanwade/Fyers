@@ -162,6 +162,24 @@ plot_config = {
     "displayModeBar": True,
     "displaylogo": False
 }
+
+COMMON_LAYOUT = dict(
+    xaxis=dict(
+        tickfont=dict(size=18),
+        title_font=dict(size=18),
+        tickangle=-45
+    ),
+    yaxis=dict(
+        tickfont=dict(size=16),
+        title_font=dict(size=18)
+    ),
+    legend=dict(
+        font=dict(size=20)
+    ),
+    hoverlabel=dict(
+        font=dict(size=20)
+    )
+)
 # ==================================================
 # TOP SECTION
 # LEFT = DATA
@@ -195,7 +213,7 @@ with left:
     st.subheader("📌 Live Data")
 
     # TOP LINE - ALL DATA IN ONE ROW
-    c1,c2,c3,c4= st.columns(4)
+    c1,c2,c3,c4,c5= st.columns(5)
 
     with c1:
         color_metric("NIFTY", round(latest["nifty_price"],2), "#00F5FF")   # cyan
@@ -206,9 +224,11 @@ with left:
     with c3:
         color_metric("PREMIUM", round(latest["diff"],2), "#38BDF8")
     with c4:
-        color_metric("ATM_straddle", round(latest["ATM_STRADDLE"],2), "#38BDF8")       # sky blue
-        
-    c4,c5,c6,c7 = st.columns(4)
+        color_metric("PREMIUM_AVG", round(latest["FUT_PREMIUM_AVG"],2), "#38BDF8")       # sky blue
+    with c5:
+        color_metric("ATM_straddle", round(latest["ATM_STRADDLE"],2), "#38BDF8")        
+    
+    c4,c5,c6,c7,c8 = st.columns(5)
     with c4:
         color_metric("OI Bias", round(latest["oi_bias"],2), "#A78BFA")   # violet
 
@@ -219,10 +239,12 @@ with left:
         color_metric("PCR", round(latest["pcr"],2), "#22D3EE")   # blue cyan
 
     with c7:
-        color_metric("PCR20", round(latest["pcr_20"],2), "#E879F9")   # pink purple
+        color_metric("PCR20", round(latest["pcr_20"],2), "#E879F9")  
+    with c8:
+        color_metric("ATM_straddle_AVG", round(latest["ATM_STRADDLE_AVG"],2), "#38BDF8")     # pink purple
 
     # SECOND LINE - SUPPORT / RESISTANCE
-    s1,s2,s3,s4 = st.columns(4)
+    s1,s2,s3,s4,s5,s6= st.columns(6)
 
     with s1:
         color_metric("Support", round(latest["support_sum"],2), "#C4B5FD")
@@ -235,20 +257,24 @@ with left:
 
     with s4:
         color_metric("Resistance20", round(latest["resistance_20"],2), "#FDBA74")
-
+    with s5:
+        color_metric("ATM_IV", round(latest.get("CE_IV", 0),2), "#74FD82")
+    with s6:
+        color_metric("ATM_IV_AVG", round(latest.get("ATM_IV_AVG", 0),2),"#F5F50A")    
     
-    t1,t2,t3,t4,t5= st.columns(5)
+    t1,t2,t3,t4,t5,t6= st.columns(6)
     with t1:
         color_metric("Trending CE", round(latest.get("top_ce_strike", 0),2), "#FDBA74")
     with t2:
         color_metric("Trending PE", round(latest.get("top_pe_strike", 0),2), "#22c55e")
     with t3:
-        color_metric("ATM_IV", round(latest.get("CE_IV", 0),2), "#FDBA74")
-    with t4:
         color_metric("EXP_exp", round(latest.get("EXP_MOVE_EXPIRY", 0),2), "#74BFFD")
-    with t5:
+    with t4:
         color_metric("EXP_intra", round(latest.get("EXP_MOVE_INTRADAY", 0),2), "#74C2FD")    
-           
+    with t5:
+        color_metric("ATM_UPPER", round(latest.get("ATM_UPPER", 0),2), "#ED220C")
+    with t6:
+        color_metric("ATM_LOWER", round(latest.get("ATM_LOWER", 0),2), "#13E59C")           
 # -----------------------------------
 # RIGHT NIFTY CHART
 # -----------------------------------
@@ -338,6 +364,7 @@ with right:
 
         hovermode="x unified"
     )
+    fig_price.update_layout(**COMMON_LAYOUT)
 
     st.plotly_chart(fig_price, use_container_width=True, config=plot_config)
 # ==================================================
@@ -382,6 +409,7 @@ with b1:
         height=430,
         margin=dict(l=10, r=10, t=70, b=10)
     )
+    fig.update_layout(**COMMON_LAYOUT)
 
     st.plotly_chart(fig, use_container_width=True, config=plot_config)
 
@@ -418,6 +446,7 @@ with b2:
         height=430,
         margin=dict(l=10, r=10, t=70, b=10)
     )
+    fig2.update_layout(**COMMON_LAYOUT)
 
     st.plotly_chart(fig2, use_container_width=True, config=plot_config)
 
@@ -449,29 +478,30 @@ with s1:
     ))
 
     fig_sr.update_layout(
-    title={
-        "text":"📦 Support vs Resistance",
-        "font":{"color":"#00E5FF","size":20}
-    },
-    template="plotly_dark",
-    height=380,
-    margin=dict(l=10,r=10,t=70,b=10),
-    hovermode="x unified",
+        title={
+            "text":"📦 Support vs Resistance",
+            "font":{"color":"#00E5FF","size":20}
+        },
+        template="plotly_dark",
+        height=380,
+        margin=dict(l=10,r=10,t=70,b=10),
+        hovermode="x unified",
 
-    xaxis=dict(
-        title="Time",
-        color="#a78bfa"
-    ),
+        xaxis=dict(
+            title="Time",
+            color="#a78bfa"
+        ),
 
-    yaxis=dict(
-        title="OI Value",
-        color="#fb923c"
-    ),
+        yaxis=dict(
+            title="OI Value",
+            color="#fb923c"
+        ),
 
-    legend=dict(
-        font=dict(color="#ffffff")
+        legend=dict(
+            font=dict(color="#ffffff")
+        )
     )
-)
+    fig_sr.update_layout(**COMMON_LAYOUT)
 
     st.plotly_chart(fig_sr, use_container_width=True, config=plot_config)
 
@@ -499,29 +529,30 @@ with s2:
     ))
 
     fig_sr20.update_layout(
-    title={
-        "text":"📊 Support20 vs Resistance20",
-        "font":{"color":"#38BDF8","size":20}
-    },
-    template="plotly_dark",
-    height=380,
-    margin=dict(l=10,r=10,t=70,b=10),
-    hovermode="x unified",
+        title={
+            "text":"📊 Support20 vs Resistance20",
+            "font":{"color":"#38BDF8","size":20}
+        },
+        template="plotly_dark",
+        height=380,
+        margin=dict(l=10,r=10,t=70,b=10),
+        hovermode="x unified",
 
-    xaxis=dict(
-        title="Time",
-        color="#c4b5fd"
-    ),
+        xaxis=dict(
+            title="Time",
+            color="#c4b5fd"
+        ),
 
-    yaxis=dict(
-        title="OI Value",
-        color="#fdba74"
-    ),
+        yaxis=dict(
+            title="OI Value",
+            color="#fdba74"
+        ),
 
-    legend=dict(
-        font=dict(color="#ffffff")
+        legend=dict(
+            font=dict(color="#ffffff")
+        )
     )
-)
+    fig_sr20.update_layout(**COMMON_LAYOUT)
 
     st.plotly_chart(fig_sr20, use_container_width=True, config=plot_config)
 
@@ -539,7 +570,31 @@ with iv_col:
         y=df["CE_IV"],
         mode="lines+markers",
         name="ATM IV",
-        line=dict(color="#22c55e", width=2)
+        line=dict(color="#22c55e", width=3)
+    ))
+
+    fig_iv.add_trace(go.Scatter(
+        x=df["time"],
+        y=df["ATM_IV_AVG"],
+        mode="lines",
+        name="ATM AVG",
+        line=dict(color="yellow", width=2)
+    ))
+
+    fig_iv.add_trace(go.Scatter(
+        x=df["time"],
+        y=df["ATM_UPPER"],
+        mode="lines",
+        name="ATM Upper",
+        line=dict(color="red", width=1)
+    ))
+
+    fig_iv.add_trace(go.Scatter(
+        x=df["time"],
+        y=df["ATM_LOWER"],
+        mode="lines",
+        name="ATM Lower",
+        line=dict(color="cyan", width=1)
     ))
 
     fig_iv.update_layout(
@@ -552,6 +607,7 @@ with iv_col:
         margin=dict(l=10,r=10,t=70,b=10),
         hovermode="x unified"
     )
+    fig_iv.update_layout(**COMMON_LAYOUT)
 
     st.plotly_chart(
         fig_iv,
@@ -570,6 +626,13 @@ with premium_col:
         name="Futures Premium",
         line=dict(color="#38bdf8", width=2)
     ))
+    fig_premium.add_trace(go.Scatter(
+        x=df["time"],
+        y=df["FUT_PREMIUM_AVG"],
+        mode="lines",
+        name="Premium Avg",
+        line=dict(color="yellow", width=2)
+    ))
 
     fig_premium.add_hline(
         y=0,
@@ -586,8 +649,10 @@ with premium_col:
         height=430,
         margin=dict(l=10,r=10,t=70,b=10)
     )
+    fig_premium.update_layout(**COMMON_LAYOUT)
 
     st.plotly_chart(
+
         fig_premium,
         use_container_width=True,
         config=plot_config
@@ -614,6 +679,13 @@ fig_straddle.add_trace(go.Scatter(
     "<b>ATM Straddle:</b> %{y:.2f}"
     "<extra></extra>"
 ))
+fig_straddle.add_trace(go.Scatter(
+    x=df["time"],
+    y=df["ATM_STRADDLE_AVG"],
+    mode="lines",
+    name="Straddle Avg",
+    line=dict(color="white", width=2)
+))
 
 fig_straddle.update_layout(
     title={
@@ -630,6 +702,7 @@ fig_straddle.update_layout(
         font=dict(size=22)
     )
 )
+fig_straddle.update_layout(**COMMON_LAYOUT)
 
 st.plotly_chart(
     fig_straddle,

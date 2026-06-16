@@ -7,27 +7,8 @@ import redis
 import json 
 from dotenv import load_dotenv
 from fyers_apiv3 import fyersModel
-from nifty_analytics import run_nifty_oi_once
-# from fetch_nifty_redis import fetch_and_store_data
-from nifty_analytics import run_nifty_once, initialize_nifty_analytics,store_oi_feature_snapshot
+from nifty import NiftyAnalytics
 from pymongo import MongoClient
-
-
-# -------------------------------
-# MONGODB
-# -------------------------------
-MONGO_URI = os.getenv("MONGO_URI")
-
-if not MONGO_URI:
-    raise ValueError("MONGO_URI not found in .env ❌")
-
-mongo_client = MongoClient(MONGO_URI)
-
-mongo_db = mongo_client["market_data"]      # database name
-mongo_collection = mongo_db["nifty_eod"]    # collection name
-
-print("Connected to MongoDB ")
-
 
 # -------------------------------
 # ENV + REDIS
@@ -45,6 +26,21 @@ redis_client = redis.Redis(
     decode_responses=True
 )
 
+
+# -------------------------------
+# MONGODB
+# -------------------------------
+MONGO_URI = os.getenv("MONGO_URI")
+
+if not MONGO_URI:
+    raise ValueError("MONGO_URI not found in .env ❌")
+
+mongo_client = MongoClient(MONGO_URI)
+
+mongo_db = mongo_client["market_data"]      # database name
+mongo_collection = mongo_db["nifty_eod"]    # collection name
+
+print("Connected to MongoDB ")
 
 # -------------------------------
 # MONGODB SAVE FUNCTION
@@ -171,10 +167,19 @@ def login():
 # INIT NIFTY
 # -------------------------------
 def init_nifty():
+
+    global analytics
+
     print("Initializing NIFTY...")
 
     fyers = get_fyers()
-    initialize_nifty_analytics(redis_client, fyers)
+
+    analytics = NiftyAnalytics(
+        redis_client,
+        fyers
+    )
+
+    analytics.initialize_nifty_analytics()
 
     print("NIFTY initialized ✅")
 
@@ -206,42 +211,58 @@ def wait_for_next_candle():
 # RUN ONE CYCLE
 # -------------------------------
 def run_cycle():
-    print(f"\nRunning cycle: {datetime.datetime.now()}")
+
+    print(
+        f"\nRunning cycle: "
+        f"{datetime.datetime.now()}"
+    )
 
     try:
-        fyers = get_fyers()
-        
-        # ✅ FIRST: update candle + day_open
-        run_nifty_once(redis_client, fyers)
 
-        # ✅ THEN: OI (lock will use day_open)
-        run_nifty_oi_once(redis_client, fyers)
-        # fetch_and_store_data()
-        store_oi_feature_snapshot(redis_client) 
+        analytics.get_nifty_candle()
+
+        analytics.get_nifty_oi()
+
+        analytics.store_oi_feature_snapshot()
+
+        analytics.save_all()
 
         print("Cycle completed ✅")
 
     except Exception as e:
-        print(f"Cycle Error: {e}")
+
+        print(
+            f"Cycle Error: {e}"
+        )
+
         time.sleep(5)
 
 # -------------------------------
 # FINAL RUN AFTER MARKET CLOSE
 # -------------------------------
 def run_final():
+
     print("\nFinal market close run")
 
     try:
-        fyers = get_fyers()
-        run_nifty_oi_once(redis_client, fyers)
-        run_nifty_once(redis_client, fyers)
-        # fetch_and_store_data()
+
+        analytics.get_nifty_candle()
+
+        analytics.get_nifty_oi()
+
+        analytics.store_oi_feature_snapshot()
+
+        analytics.save_all()
+
         save_today_to_mongo()
 
         print("Final cycle completed ✅")
 
     except Exception as e:
-        print(f"Final Run Error: {e}")
+
+        print(
+            f"Final Run Error: {e}"
+        )
 
     print("System stopping 🛑")
 

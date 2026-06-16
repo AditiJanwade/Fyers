@@ -519,7 +519,7 @@ def build_oi_feature_snapshot(redis_client):
         )
 
         top_ce_strike = int(sorted_ce[0][0]) if len(sorted_ce) > 0 else 0
-        top_ce_strike_2 = int(sorted_ce[1][0]) if len(sorted_ce) > 1 else 0
+       
         
         # TOP 2 PE STRIKES
         sorted_pe = sorted(
@@ -529,22 +529,67 @@ def build_oi_feature_snapshot(redis_client):
         )
 
         top_pe_strike = int(sorted_pe[0][0]) if len(sorted_pe) > 0 else 0
-        top_pe_strike_2 = int(sorted_pe[1][0]) if len(sorted_pe) > 1 else 0
-
-        # top_ce_strike = int(max(ce_data, key=ce_data.get)) if ce_data else 0
-        # top_pe_strike = int(max(pe_data, key=pe_data.get)) if pe_data else 0
-
+        
         if not strikes:
             return None
         day_vars = redis_client.hgetall("NIFTY_DAY_VAR")
+       
+        nifty_price = float(day_vars.get("close", 0))
+        # -------------------------
+        # NIFTY FUTURE PRICE
+        # -------------------------
+        fut_price = 0
+
+        try:
+            now = datetime.datetime.now()
+
+            months = [
+                "JAN","FEB","MAR","APR","MAY","JUN",
+                "JUL","AUG","SEP","OCT","NOV","DEC"
+            ]
+
+            year = str(now.year)[-2:]
+            curr_idx = now.month - 1
+
+            # try current month + next month
+            symbols_to_try = []
+
+            curr_month = months[curr_idx]
+            next_month = months[(curr_idx + 1) % 12]
+
+            symbols_to_try.append(f"NSE:NIFTY{year}{curr_month}FUT")
+            symbols_to_try.append(f"NSE:NIFTY{year}{next_month}FUT")
+
+            for fut_symbol in symbols_to_try:
+
+                response = fyers.quotes({"symbols": fut_symbol})
+
+                print("TRY FUT SYMBOL:", fut_symbol)
+                print("FUT RESPONSE:", response)
+
+                if "d" in response and response["d"]:
+
+                    data = response["d"][0].get("v", {})
+
+                    price = data.get("lp") or data.get("last_price") or 0
+
+                    if price and price > 0:
+                        fut_price = price
+                        print("ACTIVE FUT FOUND:", fut_symbol, fut_price)
+                        break
+
+            diff = fut_price - nifty_price       
+
+        except Exception as e:
+            print("FUT Error:", e)
+
         # -------------------------
         # SUPPORT / RESISTANCE (Directional)
-        # -------------------------
-        nifty_price = float(day_vars.get("close", 0))
+        # -------------------------        
 
         atm_index = min(
             range(len(strikes)),
-            key=lambda i: abs(strikes[i] - nifty_price)
+            key=lambda i: abs(strikes[i] - fut_price)
         )
         atm_strike = strikes[atm_index]
 
@@ -568,19 +613,53 @@ def build_oi_feature_snapshot(redis_client):
         atm_ce_iv = ce_iv.get(str(atm_strike), 0)
         atm_pe_iv = pe_iv.get(str(atm_strike), 0)
 
+        Exp_Expiry = atm_straddle / 1.25
+
         # Expiry date from OI data
         expiry_date = datetime.datetime.strptime(expiry, "%d-%m-%Y").date()
 
-        days_to_expiry = max(
-            1,
-            (expiry_date - datetime.date.today()).days
-        )
+        today = datetime.date.today()
 
-        Exp_Expiry = atm_straddle / 1.25
+        # Expiry Day
+        if expiry_date == today:
 
-        Exp_Intra = atm_straddle * math.sqrt(
-            1 / days_to_expiry
-        )
+            now = datetime.datetime.now()
+
+            market_start = now.replace(
+                hour=9,
+                minute=15,
+                second=0,
+                microsecond=0
+            )
+
+            market_end = now.replace(
+                hour=15,
+                minute=30,
+                second=0,
+                microsecond=0
+            )
+
+            total_minutes = 375  # 9:15 → 15:30
+
+            remaining_minutes = max(
+                1,
+                (market_end - now).total_seconds() / 60
+            )
+
+            Exp_Intra = Exp_Expiry * math.sqrt(
+                remaining_minutes / total_minutes
+            )
+
+        else:
+
+            days_to_expiry = max(
+                1,
+                (expiry_date - today).days
+            )
+
+            Exp_Intra = Exp_Expiry * math.sqrt(
+                1 / days_to_expiry
+            )
         
          # CE → Resistance side (ATM to ATM + 3)
         ce_strikes = strikes[atm_index : min(len(strikes), atm_index + 4)]
@@ -634,165 +713,6 @@ def build_oi_feature_snapshot(redis_client):
         day_vars = redis_client.hgetall("NIFTY_DAY_VAR")
         nifty_price = float(day_vars.get("close", 0))
 
-        # -------------------------
-        # PREVIOUS OI SNAPSHOT
-        # -------------------------
-
-        prev_raw = redis_client.get("PREV_OI_DATA")
-        if not prev_raw:
-
-            redis_client.set(
-                "PREV_OI_DATA",
-                json.dumps({
-                    "CE": ce_data,
-                    "PE": pe_data
-                })
-            )
-
-            return None
-
-        prev_ce = {}
-        prev_pe = {}
-
-        if prev_raw:
-
-            prev_data = json.loads(prev_raw)
-
-            prev_ce = {
-                int(k): v
-                for k, v in prev_data.get("CE", {}).items()
-            }
-
-            prev_pe = {
-                int(k): v
-                for k, v in prev_data.get("PE", {}).items()
-            }
-
-        # -------------------------
-        # CE DIFFERENCE
-        # -------------------------
-        ce_diff = {}
-
-        for strike, curr_oi in ce_data.items():
-
-            prev_oi = prev_ce.get(strike, 0)
-
-            ce_diff[strike] = curr_oi - prev_oi
-
-        # -------------------------
-        # PE DIFFERENCE
-        # -------------------------
-        pe_diff = {}
-
-        for strike, curr_oi in pe_data.items():
-
-            prev_oi = prev_pe.get(strike, 0)
-
-            pe_diff[strike] = curr_oi - prev_oi
-
-        # -------------------------
-        # LARGEST ABSOLUTE CE CHANGE
-        # -------------------------
-        largest_ce_strike = 0
-        largest_ce_diff = 0
-
-        if ce_diff:
-
-            largest_ce_strike = max(
-                ce_diff,
-                key=lambda k: abs(ce_diff[k])
-            )
-
-            largest_ce_diff = ce_diff[largest_ce_strike]
-
-        # -------------------------
-        # LARGEST ABSOLUTE PE CHANGE
-        # -------------------------
-        largest_pe_strike = 0
-        largest_pe_diff = 0
-
-        if pe_diff:
-
-            largest_pe_strike = max(
-                pe_diff,
-                key=lambda k: abs(pe_diff[k])
-            )
-
-            largest_pe_diff = pe_diff[largest_pe_strike]
-
-        # -------------------------
-        # TYPE
-        # -------------------------
-        largest_ce_type = (
-            "BUILDUP"
-            if largest_ce_diff > 0
-            else "UNWINDING"
-        )
-
-        largest_pe_type = (
-            "BUILDUP"
-            if largest_pe_diff > 0
-            else "UNWINDING"
-        )
-
-        # -------------------------
-        # SAVE CURRENT AS PREVIOUS
-        # -------------------------
-        redis_client.set(
-            "PREV_OI_DATA",
-            json.dumps({
-                "CE": ce_data,
-                "PE": pe_data
-            })
-        )
-
-        # -------------------------
-        # NIFTY FUTURE PRICE
-        # -------------------------
-        fut_price = 0
-
-        try:
-            now = datetime.datetime.now()
-
-            months = [
-                "JAN","FEB","MAR","APR","MAY","JUN",
-                "JUL","AUG","SEP","OCT","NOV","DEC"
-            ]
-
-            year = str(now.year)[-2:]
-            curr_idx = now.month - 1
-
-            # try current month + next month
-            symbols_to_try = []
-
-            curr_month = months[curr_idx]
-            next_month = months[(curr_idx + 1) % 12]
-
-            symbols_to_try.append(f"NSE:NIFTY{year}{curr_month}FUT")
-            symbols_to_try.append(f"NSE:NIFTY{year}{next_month}FUT")
-
-            for fut_symbol in symbols_to_try:
-
-                response = fyers.quotes({"symbols": fut_symbol})
-
-                print("TRY FUT SYMBOL:", fut_symbol)
-                print("FUT RESPONSE:", response)
-
-                if "d" in response and response["d"]:
-
-                    data = response["d"][0].get("v", {})
-
-                    price = data.get("lp") or data.get("last_price") or 0
-
-                    if price and price > 0:
-                        fut_price = price
-                        print("ACTIVE FUT FOUND:", fut_symbol, fut_price)
-                        break
-
-            diff = fut_price - nifty_price       
-
-        except Exception as e:
-            print("FUT Error:", e)
 
         # -------------------------
         # FINAL FEATURE OBJECT
@@ -814,18 +734,10 @@ def build_oi_feature_snapshot(redis_client):
 
             "CE_IV":atm_ce_iv,
             "PE_IV":atm_pe_iv,
+
             "ATM_STRADDLE": round(atm_straddle, 2),
             "EXP_MOVE_EXPIRY": round(Exp_Expiry, 2),
             "EXP_MOVE_INTRADAY": round(Exp_Intra, 2),
-
-            "top_ce_strike_2": top_ce_strike_2,
-            "top_pe_strike_2": top_pe_strike_2,
-
-            "largest_ce_strike": largest_ce_strike,
-            "largest_ce_diff": largest_ce_diff,
-            
-            "largest_pe_strike": largest_pe_strike,
-            "largest_pe_diff": largest_pe_diff,
         }
 
     except Exception as e:
@@ -835,13 +747,6 @@ def build_oi_feature_snapshot(redis_client):
 def store_oi_feature_snapshot(redis_client):
     try:
         features = build_oi_feature_snapshot(redis_client)
-        print("-------------features--------------")
-        for key, value in features.items():
-            print(f"{key}: {value}")
-        print("-----------------------------------")
-
-        if not features:
-            return
 
         oi_bias = features.get("oi_bias", 0)
 
@@ -861,7 +766,6 @@ def store_oi_feature_snapshot(redis_client):
         candle = json.loads(latest_candle_raw)
 
         candle_time = datetime.datetime.fromtimestamp(candle["timestamp"])
-
         date_key = candle_time.strftime("%Y-%m-%d")
         time_key = candle_time.strftime("%H:%M")
 
@@ -873,15 +777,70 @@ def store_oi_feature_snapshot(redis_client):
             day_data = json.loads(existing)
         else:
             day_data = {}
+        # -------------------------
+        # TODAY RUNNING AVERAGES
+        # -------------------------
+        prev_diff = [
+            v.get("diff", 0)
+            for v in day_data.values()
+        ]
+
+        prev_iv = [
+            v.get("CE_IV", 0)
+            for v in day_data.values()
+        ]
+
+        prev_straddle = [
+            v.get("ATM_STRADDLE", 0)
+            for v in day_data.values()
+        ]
+
+        features["FUT_PREMIUM_AVG"] = round(
+            (sum(prev_diff) + features["diff"]) /
+            (len(prev_diff) + 1),
+            2
+        )
+
+        features["ATM_IV_AVG"] = round(
+            (sum(prev_iv) + features["CE_IV"]) /
+            (len(prev_iv) + 1),
+            2
+        )
+
+        features["ATM_STRADDLE_AVG"] = round(
+            (sum(prev_straddle) + features["ATM_STRADDLE"]) /
+            (len(prev_straddle) + 1),
+            2
+        )
+
+        features["ATM_UPPER"] = round(
+            features["ATM_IV_AVG"] * 1.2,
+            2
+        )
+
+        features["ATM_LOWER"] = round(
+            features["ATM_IV_AVG"] * 0.8,
+            2
+        )
+
 
         day_data[time_key] = features
+        print("-------------features--------------")
+        for key, value in features.items():
+            print(f"{key}: {value}")
+        print("-----------------------------------")
+
+        if not features:
+            return
 
         redis_client.hset(redis_key, date_key, json.dumps(day_data))
 
         print(f"✅ OI Feature Saved → {time_key}")
+    
 
     except Exception as e:
         print("OI Store Error:", e)
+
         
 def run_nifty_oi_once(redis_client, fyers):
     data = {
