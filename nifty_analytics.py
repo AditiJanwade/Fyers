@@ -578,7 +578,10 @@ def build_oi_feature_snapshot(redis_client):
                         print("ACTIVE FUT FOUND:", fut_symbol, fut_price)
                         break
 
-            diff = fut_price - nifty_price       
+            if fut_price > 0:
+                diff = round(fut_price - nifty_price, 2)
+            else:
+                diff = 0      
 
         except Exception as e:
             print("FUT Error:", e)
@@ -783,7 +786,23 @@ def store_oi_feature_snapshot(redis_client):
         prev_diff = [
             v.get("diff", 0)
             for v in day_data.values()
+            if v.get("nifty_fut_price", 0) > 0
         ]
+
+        if features["nifty_fut_price"] > 0:
+
+            features["FUT_PREMIUM_AVG"] = round(
+                (sum(prev_diff) + features["diff"]) /
+                (len(prev_diff) + 1),
+                2
+            )
+
+        else:
+
+            features["FUT_PREMIUM_AVG"] = (
+                round(sum(prev_diff) / len(prev_diff), 2)
+                if prev_diff else 0
+            )
 
         prev_iv = [
             v.get("CE_IV", 0)
@@ -794,12 +813,6 @@ def store_oi_feature_snapshot(redis_client):
             v.get("ATM_STRADDLE", 0)
             for v in day_data.values()
         ]
-
-        features["FUT_PREMIUM_AVG"] = round(
-            (sum(prev_diff) + features["diff"]) /
-            (len(prev_diff) + 1),
-            2
-        )
 
         features["ATM_IV_AVG"] = round(
             (sum(prev_iv) + features["CE_IV"]) /
